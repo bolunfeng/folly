@@ -139,7 +139,7 @@ void FormatValue<double>::formatHelper(
     default:
       plusSign = '\0';
       break;
-  };
+  }
 
   auto flags = DoubleToStringConverter::EMIT_POSITIVE_EXPONENT_SIGN |
       (arg.trailingDot ? DoubleToStringConverter::EMIT_TRAILING_DECIMAL_POINT
@@ -149,7 +149,7 @@ void FormatValue<double>::formatHelper(
   switch (arg.presentation) {
     case '%':
       val *= 100;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 'f':
     case 'F': {
       if (arg.precision > DoubleToStringConverter::kMaxFixedDigitsAfterPoint) {
@@ -426,9 +426,5 @@ void insertThousandsGroupingUnsafe(char* start_buffer, char** end_buffer) {
 
 FormatKeyNotFoundException::FormatKeyNotFoundException(StringPiece key)
     : std::out_of_range(kMessagePrefix.str() + key.str()) {}
-
-#if FOLLY_CPLUSPLUS < 201703L
-constexpr StringPiece const FormatKeyNotFoundException::kMessagePrefix;
-#endif
 
 } // namespace folly

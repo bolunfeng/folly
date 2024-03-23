@@ -3005,6 +3005,9 @@ AsyncSocket::ReadCode AsyncSocket::processZeroCopyRead() {
   }
 
   auto ptr = memStore->get();
+  if (!ptr) {
+    return ReadCode::READ_NOT_SUPPORTED;
+  }
 
   void* copybuf = nullptr;
   size_t copybuf_len = 0;
@@ -3283,7 +3286,7 @@ void AsyncSocket::handleRead() noexcept {
         break;
       case ReadCode::READ_DONE:
         return;
-    };
+    }
   }
 
   if (readCallback_ && eventBase_ == originalEventBase) {

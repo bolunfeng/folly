@@ -467,6 +467,13 @@ class CleanCmd(SubCmd):
         clean_dirs(opts)
 
 
+@cmd("show-scratch-dir", "show the scratch dir")
+class ShowScratchDirCmd(SubCmd):
+    def run(self, args):
+        opts = setup_build_options(args)
+        print(opts.scratch_dir)
+
+
 @cmd("show-build-dir", "print the build dir for a given project")
 class ShowBuildDirCmd(ProjectCmdBase):
     def run_project_cmd(self, args, loader, manifest):
@@ -497,6 +504,12 @@ class ShowInstDirCmd(ProjectCmdBase):
             manifests = [manifest]
 
         for m in manifests:
+            fetcher = loader.create_fetcher(m)
+            if isinstance(fetcher, SystemPackageFetcher):
+                # We are guaranteed that if the fetcher is set to
+                # SystemPackageFetcher then this item is completely
+                # satisfied by the appropriate system packages
+                continue
             inst_dir = loader.get_project_install_dir_respecting_install_prefix(m)
             print(inst_dir)
 
@@ -801,6 +814,13 @@ class BuildCmd(ProjectCmdBase):
             action="store_true",
             default=False,
         )
+        parser.add_argument(
+            "--build-type",
+            help="Set the build type explicitly.  Cmake and cargo builders act on them. Only Debug and RelWithDebInfo widely supported.",
+            choices=["Debug", "Release", "RelWithDebInfo", "MinSizeRel"],
+            action="store",
+            default=None,
+        )
 
 
 @cmd("fixup-dyn-deps", "Adjusts dynamic dependencies for packaging purposes")
@@ -988,6 +1008,9 @@ name: {job_name}
 
 on:{run_on}
 
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+
 jobs:
 """
             )
@@ -1020,7 +1043,11 @@ jobs:
                 out.write("    - name: Disable autocrlf\n")
                 out.write("      run: git config --system core.autocrlf false\n")
 
-            out.write("    - uses: actions/checkout@v2\n")
+            out.write("    - uses: actions/checkout@v4\n")
+
+            build_type_arg = ""
+            if args.build_type:
+                build_type_arg = f"--build-type {args.build_type} "
 
             if build_opts.free_up_disk:
                 free_up_disk = "--free-up-disk "
@@ -1053,6 +1080,11 @@ jobs:
                 out.write(
                     f"      run: {sudo_arg}python3 build/fbcode_builder/getdeps.py --allow-system-packages install-system-deps --recursive {manifest.name}\n"
                 )
+                if build_opts.is_linux() or build_opts.is_freebsd():
+                    out.write("    - name: Install packaging system deps\n")
+                    out.write(
+                        f"      run: {sudo_arg}python3 build/fbcode_builder/getdeps.py --allow-system-packages install-system-deps --recursive patchelf\n"
+                    )
 
             projects = loader.manifests_in_dependency_order()
 
@@ -1097,7 +1129,7 @@ jobs:
                             has_same_repo_dep = True
                         out.write("    - name: Build %s\n" % m.name)
                         out.write(
-                            f"      run: {getdepscmd}{allow_sys_arg} build {src_dir_arg}{free_up_disk}--no-tests {m.name}\n"
+                            f"      run: {getdepscmd}{allow_sys_arg} build {build_type_arg}{src_dir_arg}{free_up_disk}--no-tests {m.name}\n"
                         )
 
             out.write("    - name: Build %s\n" % manifest.name)
@@ -1118,7 +1150,7 @@ jobs:
                 no_tests_arg = "--no-tests "
 
             out.write(
-                f"      run: {getdepscmd}{allow_sys_arg} build {no_tests_arg}{no_deps_arg}--src-dir=. {manifest.name} {project_prefix}\n"
+                f"      run: {getdepscmd}{allow_sys_arg} build {build_type_arg}{no_tests_arg}{no_deps_arg}--src-dir=. {manifest.name} {project_prefix}\n"
             )
 
             out.write("    - name: Copy artifacts\n")
@@ -1203,6 +1235,13 @@ jobs:
             help="Remove unused tools and clean up intermediate files if possible to maximise space for the build",
             action="store_true",
             default=False,
+        )
+        parser.add_argument(
+            "--build-type",
+            help="Set the build type explicitly.  Cmake and cargo builders act on them. Only Debug and RelWithDebInfo widely supported.",
+            choices=["Debug", "Release", "RelWithDebInfo", "MinSizeRel"],
+            action="store",
+            default=None,
         )
 
 

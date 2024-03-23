@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+//
+// Docs: https://fburl.com/fbcref_coro_task
+//
+
 #pragma once
 
 #include <exception>
@@ -67,15 +71,23 @@ class TaskPromiseBase {
     FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES coroutine_handle<>
     await_suspend(coroutine_handle<Promise> coro) noexcept {
       auto& promise = coro.promise();
-      // If the continuation has been exchanged, then we expect that the
-      // exchanger will handle the lifetime of the async stack. See
+      // If ScopeExitTask has been attached, then we expect that the
+      // ScopeExitTask will handle the lifetime of the async stack. See
       // ScopeExitTaskPromise's FinalAwaiter for more details.
       //
       // This is a bit untidy, and hopefully something we can replace with
       // a virtual wrapper over coroutine_handle that handles the pop for us.
-      if (promise.ownsAsyncFrame_) {
-        folly::popAsyncStackFrameCallee(promise.asyncFrame_);
+      if (promise.scopeExit_) {
+        promise.scopeExit_.promise().setContext(
+            promise.continuation_,
+            &promise.asyncFrame_,
+            promise.executor_.get_alias(),
+            promise.result_.hasException() ? promise.result_.exception()
+                                           : exception_wrapper{});
+        return promise.scopeExit_;
       }
+
+      folly::popAsyncStackFrameCallee(promise.asyncFrame_);
       if (promise.result_.hasException()) {
         auto [handle, frame] =
             promise.continuation_.getErrorHandle(promise.result_.exception());
@@ -162,22 +174,19 @@ class TaskPromiseBase {
   template <typename T>
   friend class folly::coro::Task;
 
-  friend std::tuple<bool, coroutine_handle<>> tag_invoke(
+  friend coroutine_handle<ScopeExitTaskPromiseBase> tag_invoke(
       cpo_t<co_attachScopeExit>,
       TaskPromiseBase& p,
-      coroutine_handle<> continuation) noexcept {
-    return {
-        std::exchange(p.ownsAsyncFrame_, false),
-        std::exchange(p.continuation_, {continuation}).getHandle(),
-    };
+      coroutine_handle<ScopeExitTaskPromiseBase> scopeExit) noexcept {
+    return std::exchange(p.scopeExit_, scopeExit);
   }
 
   ExtendedCoroutineHandle continuation_;
   folly::AsyncStackFrame asyncFrame_;
   folly::Executor::KeepAlive<> executor_;
   folly::CancellationToken cancelToken_;
+  coroutine_handle<ScopeExitTaskPromiseBase> scopeExit_;
   bool hasCancelTokenOverride_ = false;
-  bool ownsAsyncFrame_ = true;
 
  protected:
   enum class BypassExceptionThrowing : uint8_t {
@@ -603,6 +612,24 @@ class FOLLY_NODISCARD TaskWithExecutor {
     return Awaiter{std::exchange(coro_, {})};
   }
 
+  std::pair<Task<T>, Executor::KeepAlive<>> unwrap() && {
+    auto executor = std::move(coro_.promise().executor_);
+    Task<T> task{std::exchange(coro_, {})};
+    return {std::move(task), std::move(executor)};
+  }
+
+  friend ViaIfAsyncAwaitable<TaskWithExecutor> co_viaIfAsync(
+      Executor::KeepAlive<> executor,
+      TaskWithExecutor&& taskWithExecutor) noexcept {
+    auto [task, taskExecutor] = std::move(taskWithExecutor).unwrap();
+    return ViaIfAsyncAwaitable<TaskWithExecutor>(
+        std::move(executor),
+        [](Task<T> t) -> Task<T> {
+          co_yield co_result(co_await co_awaitTry(std::move(t)));
+        }(std::move(task))
+                             .scheduleOn(std::move(taskExecutor)));
+  }
+
   friend TaskWithExecutor co_withCancellation(
       folly::CancellationToken cancelToken, TaskWithExecutor&& task) noexcept {
     DCHECK(task.coro_);
@@ -750,6 +777,7 @@ class FOLLY_NODISCARD Task {
  private:
   friend class detail::TaskPromiseBase;
   friend class detail::TaskPromise<T>;
+  friend class TaskWithExecutor<T>;
 
   class Awaiter {
    public:

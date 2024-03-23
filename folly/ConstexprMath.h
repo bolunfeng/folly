@@ -24,6 +24,8 @@
 #include <type_traits>
 
 #include <folly/Portability.h>
+#include <folly/lang/CheckedMath.h>
+#include <folly/portability/Constexpr.h>
 
 namespace folly {
 
@@ -75,11 +77,6 @@ struct floating_point_integral_constant {
   constexpr operator value_type() const noexcept { return value; }
   constexpr value_type operator()() const noexcept { return value; }
 };
-#if FOLLY_CPLUSPLUS < 201703L
-template <typename T, typename S, S Value>
-constexpr typename floating_point_integral_constant<T, S, Value>::value_type
-    floating_point_integral_constant<T, S, Value>::value;
-#endif
 
 //  ----
 
@@ -225,11 +222,6 @@ struct constexpr_iterated_squares_desc {
     return {power, scale};
   }
 };
-#if FOLLY_CPLUSPLUS < 201703L
-template <typename T, std::size_t Size>
-constexpr typename constexpr_iterated_squares_desc<T, Size>::size_type
-    constexpr_iterated_squares_desc<T, Size>::size;
-#endif
 
 /// constexpr_iterated_squares_desc_v
 ///
@@ -358,7 +350,9 @@ constexpr T constexpr_log2_ceil(T t) {
 /// constexpr_trunc
 ///
 /// mimic: std::trunc (C++23)
-template <typename T>
+template <
+    typename T,
+    std::enable_if_t<std::is_floating_point<T>::value, int> = 0>
 constexpr T constexpr_trunc(T const t) {
   using lim = std::numeric_limits<T>;
   using int_type = std::uintmax_t;
@@ -366,10 +360,9 @@ constexpr T constexpr_trunc(T const t) {
   static_assert(lim::radix == 2, "non-binary radix");
   static_assert(lim::digits <= int_lim::digits, "overwide mantissa");
   constexpr auto bound = static_cast<T>(std::uintmax_t(1) << (lim::digits - 1));
-  constexpr auto is_fp = std::is_floating_point<T>::value;
   auto const neg = !constexpr_isnan(t) && t < T(0);
   auto const s = neg ? -t : t;
-  if (!is_fp || constexpr_isnan(t) || t == T(0) || !(s < bound)) {
+  if (constexpr_isnan(t) || t == T(0) || !(s < bound)) {
     return t;
   }
   if (s < T(1)) {
@@ -377,6 +370,11 @@ constexpr T constexpr_trunc(T const t) {
   }
   auto const r = static_cast<T>(static_cast<int_type>(s));
   return neg ? -r : r;
+}
+
+template <typename T, std::enable_if_t<std::is_integral<T>::value, int> = 0>
+constexpr T constexpr_trunc(T const t) {
+  return t;
 }
 
 /// constexpr_round
@@ -414,7 +412,7 @@ template <typename T>
 constexpr T constexpr_ceil(T t, T round) {
   return round == T(0)
       ? t
-      : ((t + (t < T(0) ? T(0) : round - T(1))) / round) * round;
+      : ((t + (t <= T(0) ? T(0) : round - T(1))) / round) * round;
 }
 
 /// constexpr_mult
@@ -453,7 +451,10 @@ constexpr T constexpr_mult(T const a, T const b) {
 
 namespace detail {
 
-template <typename T, typename E>
+template <
+    typename T,
+    typename E,
+    std::enable_if_t<std::is_signed<E>::value, int> = 1>
 constexpr T constexpr_ipow(T const base, E const exp) {
   if (std::is_floating_point<T>::value) {
     if (exp < E(0)) {
@@ -467,6 +468,31 @@ constexpr T constexpr_ipow(T const base, E const exp) {
     }
   }
   assert(!(exp < E(0)) && "negative exponent with integral base");
+  if (exp == E(0)) {
+    return T(1);
+  }
+  if (exp == E(1)) {
+    return base;
+  }
+  auto const hexp = constexpr_trunc(exp / E(2));
+  auto const div = constexpr_ipow(base, hexp);
+  auto const rem = hexp * E(2) == exp ? T(1) : base;
+  return constexpr_mult(constexpr_mult(div, div), rem);
+}
+
+template <
+    typename T,
+    typename E,
+    std::enable_if_t<std::is_unsigned<E>::value, int> = 1>
+constexpr T constexpr_ipow(T const base, E const exp) {
+  if (std::is_floating_point<T>::value) {
+    if (exp == E(0)) {
+      return T(1);
+    }
+    if (constexpr_isnan(base)) {
+      return base;
+    }
+  }
   if (exp == E(0)) {
     return T(1);
   }
@@ -729,6 +755,22 @@ constexpr T constexpr_add_overflow_clamped(T a, T b) {
   static_assert(
       !std::is_integral<T>::value || sizeof(T) <= sizeof(M),
       "Integral type too large!");
+  if (!folly::is_constant_evaluated_or(true)) {
+    if constexpr (std::is_integral_v<T>) {
+      T ret{};
+      if (FOLLY_UNLIKELY(!checked_add(&ret, a, b))) {
+        if constexpr (std::is_signed_v<T>) {
+          // Could be either overflow or underflow for signed types.
+          // Can only be underflow if both inputs are negative.
+          if (a < 0 && b < 0) {
+            return L::min();
+          }
+        }
+        return L::max();
+      }
+      return ret;
+    }
+  }
   // clang-format off
   return
     // don't do anything special for non-integral types.
@@ -744,7 +786,7 @@ constexpr T constexpr_add_overflow_clamped(T a, T b) {
     // a < 0 && b >= 0, `a + b` will always be in valid range of type T.
     !(b < 0) ? a + b :
     // a < 0 && b < 0, keep the result >= MIN.
-               a + constexpr_max(b, T(L::min() - a));
+              a + constexpr_max(b, T(L::min() - a));
   // clang-format on
 }
 

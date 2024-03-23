@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+//
+// Docs: https://fburl.com/fbcref_range
+//
+
 /**
  * Range abstraction using a pair of iterators. It is not
  * similar to boost's range abstraction because an API identical
@@ -30,9 +34,6 @@
  * @refcode folly/docs/examples/folly/Range.h
  * @struct folly::range
  */
-
-// @author Mark Rabkin (mrabkin@fb.com)
-// @author Andrei Alexandrescu (andrei.alexandrescu@fb.com)
 
 #pragma once
 
@@ -52,11 +53,8 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
-
-#if FOLLY_HAS_STRING_VIEW
-#include <string_view> // @manual
-#endif
 
 #if __has_include(<fmt/format.h>)
 #include <fmt/format.h>
@@ -197,6 +195,8 @@ struct range_traits_char_ {
 struct range_traits_byte_ {
   template <typename Value>
   struct apply {
+    FOLLY_ERASE static constexpr bool eq(Value a, Value b) { return a == b; }
+
     FOLLY_ERASE static constexpr int compare(
         Value const* a, Value const* b, std::size_t c) {
       return !c ? 0 : std::memcmp(a, b, c);
@@ -206,6 +206,8 @@ struct range_traits_byte_ {
 struct range_traits_fbck_ {
   template <typename Value>
   struct apply {
+    FOLLY_ERASE static constexpr bool eq(Value a, Value b) { return a == b; }
+
     FOLLY_ERASE static constexpr int compare(
         Value const* a, Value const* b, std::size_t c) {
       while (c--) {
@@ -627,7 +629,6 @@ class Range {
   //
   // At the moment the set of implicit target types consists of just
   // std::string_view (when it is available).
-#if FOLLY_HAS_STRING_VIEW
   struct NotStringView {};
   template <typename ValueType>
   struct StringViewType
@@ -644,10 +645,6 @@ class Range {
                 Iter const&,
                 size_type>,
             std::is_constructible<Target, _t<StringViewType<value_type>>>> {};
-#else
-  template <typename Target>
-  using IsConstructibleViaStringView = std::false_type;
-#endif
 
  public:
   /// explicit operator conversion to any compatible type
@@ -679,7 +676,6 @@ class Range {
     return Tgt(b_, e_);
   }
 
-#if FOLLY_HAS_STRING_VIEW
   /// implicit operator conversion to std::string_view
   template <
       typename Tgt,
@@ -696,7 +692,6 @@ class Range {
       std::is_nothrow_constructible<Tgt, Iter const&, size_type>::value) {
     return Tgt(b_, walk_size());
   }
-#endif
 
   /// explicit non-operator conversion to any compatible type
   ///
@@ -830,6 +825,14 @@ class Range {
     }
 
     return Range(b_ + first, std::min(length, size() - first));
+  }
+
+  template <
+      typename...,
+      typename T = Iter,
+      std::enable_if_t<detail::range_is_char_type_v_<T>, int> = 0>
+  Range substr(size_type first, size_type length = npos) const {
+    return subpiece(first, length);
   }
 
   // unchecked versions
@@ -976,6 +979,18 @@ class Range {
         trunc.begin(), trunc.end(), other.begin(), std::forward<Comp>(eq));
   }
 
+  bool starts_with(const_range_type other) const noexcept {
+    return startsWith(other);
+  }
+  bool starts_with(value_type c) const noexcept { return startsWith(c); }
+  template <
+      typename...,
+      typename T = Iter,
+      std::enable_if_t<detail::range_is_char_type_v_<T>, int> = 0>
+  bool starts_with(const value_type* other) const {
+    return startsWith(other);
+  }
+
   /**
    * Does this Range end with another range?
    */
@@ -999,6 +1014,18 @@ class Range {
   bool equals(const const_range_type& other, Comp&& eq) const {
     return size() == other.size() &&
         std::equal(begin(), end(), other.begin(), std::forward<Comp>(eq));
+  }
+
+  bool ends_with(const_range_type other) const noexcept {
+    return endsWith(other);
+  }
+  bool ends_with(value_type c) const noexcept { return endsWith(c); }
+  template <
+      typename...,
+      typename T = Iter,
+      std::enable_if_t<detail::range_is_char_type_v_<T>, int> = 0>
+  bool ends_with(const value_type* other) const {
+    return endsWith(other);
   }
 
   /**
@@ -1127,7 +1154,6 @@ class Range {
    *    }
    *  }
    *
-   * @author: Marcelo Juchem <marcelo@fb.com>
    */
   Range split_step(value_type delimiter) {
     auto i = find(delimiter);
@@ -1212,7 +1238,6 @@ class Range {
    *    }
    *  };
    *
-   * @author: Marcelo Juchem <marcelo@fb.com>
    */
   template <typename TProcess, typename... Args>
   auto split_step(value_type delimiter, TProcess&& process, Args&&... args)
@@ -1290,6 +1315,16 @@ constexpr Range<T const*> crange(std::array<T, n> const& array) {
   return Range<T const*>{array};
 }
 
+template <class T>
+constexpr Range<T const*> range(std::initializer_list<T> ilist) {
+  return Range<T const*>(ilist.begin(), ilist.end());
+}
+
+template <class T>
+constexpr Range<T const*> crange(std::initializer_list<T> ilist) {
+  return Range<T const*>(ilist.begin(), ilist.end());
+}
+
 using StringPiece = Range<const char*>;
 using MutableStringPiece = Range<char*>;
 using ByteRange = Range<const unsigned char*>;
@@ -1316,7 +1351,15 @@ std::basic_ostream<C>& operator<<(std::basic_ostream<C>& os, Range<C*> piece) {
 
 template <class Iter>
 inline bool operator==(const Range<Iter>& lhs, const Range<Iter>& rhs) {
-  return lhs.size() == rhs.size() && lhs.compare(rhs) == 0;
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs.size(); ++i) {
+    if (!Range<Iter>::traits_type::eq(lhs[i], rhs[i])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <class Iter>

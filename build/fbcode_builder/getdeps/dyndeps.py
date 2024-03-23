@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-unsafe
+
 import errno
 import glob
 import os
@@ -336,16 +338,21 @@ class ElfDeps(DepBase):
         super(ElfDeps, self).__init__(buildopts, install_dirs, strip)
 
         # We need patchelf to rewrite deps, so ensure that it is built...
-        subprocess.check_call([sys.executable, sys.argv[0], "build", "patchelf"])
+        args = [sys.executable, sys.argv[0]]
+        if buildopts.allow_system_packages:
+            args.append("--allow-system-packages")
+        subprocess.check_call(args + ["build", "patchelf"])
+
         # ... and that we know where it lives
-        self.patchelf = os.path.join(
-            os.fsdecode(
-                subprocess.check_output(
-                    [sys.executable, sys.argv[0], "show-inst-dir", "patchelf"]
-                ).strip()
-            ),
-            "bin/patchelf",
+        patchelf_install = os.fsdecode(
+            subprocess.check_output(args + ["show-inst-dir", "patchelf"]).strip()
         )
+        if not patchelf_install:
+            # its a system package, so we assume it is in the path
+            patchelf_install = "patchelf"
+        else:
+            patchelf_install = os.path.join(patchelf_install, "bin", "patchelf")
+        self.patchelf = patchelf_install
 
     def list_dynamic_deps(self, objfile):
         out = (

@@ -217,7 +217,7 @@ TEST(AsyncTest, asyncTraits) {
       std::is_same<int&, async::async_inner_type_t<async::Async<int&>>>::value);
 }
 
-#if __cpp_deduction_guides >= 201703
+#if __cpp_deduction_guides >= 201611
 TEST(AsyncTest, asyncConstructorGuides) {
   auto getLiteral = []() { return async::Async(1); };
   // int&& -> int
@@ -430,6 +430,36 @@ TEST(AsyncStack, fiberEntryPoint) {
           },
           currentFrame());
     });
+  });
+}
+
+TEST(AsyncStack, awaitTry) {
+  async::executeOnFiberAndWait([]() -> async::Async<void> {
+    auto res =
+        async::await(async::awaitTry([]() -> async::Async<int> { return 1; }));
+    EXPECT_EQ(*res, 1);
+    res = async::await(async::awaitTry(
+        []() -> async::Async<int> { throw std::logic_error(""); }));
+    EXPECT_THROW(*res, std::logic_error);
+
+    auto void_res = async::await(
+        async::awaitTry([]() -> async::Async<void> { return {}; }));
+    EXPECT_NO_THROW(*void_res);
+    void_res = async::await(async::awaitTry(
+        []() -> async::Async<void> { throw std::logic_error(""); }));
+    EXPECT_THROW(*void_res, std::logic_error);
+
+    auto try_res = async::await(
+        async::awaitTry([]() -> async::Async<folly::Try<int>> { return 1; }));
+    EXPECT_EQ(**try_res, 1);
+    try_res =
+        async::await(async::awaitTry([]() -> async::Async<folly::Try<int>> {
+          return folly::makeTryWith(
+              []() -> int { throw std::logic_error(""); });
+        }));
+    EXPECT_NO_THROW(*try_res);
+    EXPECT_THROW(**try_res, std::logic_error);
+    return {};
   });
 }
 

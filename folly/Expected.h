@@ -16,12 +16,11 @@
 
 /**
  * Like folly::Optional, but can store a value *or* an error.
- *
- * @author Eric Niebler (eniebler@fb.com)
  */
 
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <initializer_list>
 #include <new>
@@ -39,6 +38,7 @@
 #include <folly/Unit.h>
 #include <folly/Utility.h>
 #include <folly/lang/Exception.h>
+#include <folly/lang/Hint.h>
 
 #define FOLLY_EXPECTED_ID(X) FB_CONCATENATE(FB_CONCATENATE(Folly, X), __LINE__)
 
@@ -626,6 +626,11 @@ inline T&& operator,(T&& t, Unit) noexcept {
 }
 
 struct ExpectedHelper {
+  template <typename V, typename E>
+  FOLLY_ERASE static void assume_empty(Expected<V, E> const& x) {
+    compiler_may_unsafely_assume(x.which_ == Which::eEmpty);
+  }
+
   template <class Error, class T>
   static constexpr Expected<typename std::decay<T>::type, Error> return_(
       T&& t) {
@@ -1042,6 +1047,18 @@ class Expected final : expected_detail::ExpectedStorage<Value, Error> {
       noexcept(Error(std::move(err.error()))))
       : Base{expected_detail::ErrorTag{}, std::move(err.error())} {}
 
+  template <class OtherError FOLLY_REQUIRES_TRAILING(
+      std::is_convertible<const OtherError&, Error>::value)>
+  constexpr /* implicit */ Expected(const Unexpected<OtherError>& err) noexcept(
+      noexcept(Error(err.error())))
+      : Base{expected_detail::ErrorTag{}, Error(err.error())} {}
+
+  template <class OtherError FOLLY_REQUIRES_TRAILING(
+      std::is_convertible<OtherError&&, Error>::value)>
+  constexpr /* implicit  */ Expected(Unexpected<OtherError>&& err) noexcept(
+      noexcept(Error(std::move(err.error()))))
+      : Base{expected_detail::ErrorTag{}, Error(std::move(err.error()))} {}
+
   /*
    * Assignment operators
    */
@@ -1094,12 +1111,6 @@ class Expected final : expected_detail::ExpectedStorage<Value, Error> {
     this->assignError(std::move(err.error()));
     return *this;
   }
-
-#ifndef __clang__
-  // Used only when an Expected is used with coroutines on MSVC/GCC
-  /* implicit */ Expected(expected_detail::PromiseReturn<Value, Error>&& p)
-      : Expected{std::move(*p.storage_)} {}
-#endif
 
   template <class... Ts FOLLY_REQUIRES_TRAILING(
       std::is_constructible<Value, Ts&&...>::value)>
@@ -1342,6 +1353,15 @@ class Expected final : expected_detail::ExpectedStorage<Value, Error> {
   }
 
  private:
+  friend struct expected_detail::PromiseReturn<Value, Error>;
+  using EmptyTag = expected_detail::EmptyTag;
+
+  explicit Expected(EmptyTag tag) noexcept : Base{tag} {}
+  // for when coroutine promise return-object conversion is eager
+  Expected(EmptyTag tag, Expected*& pointer) noexcept : Base{tag} {
+    pointer = this;
+  }
+
   void requireValue() const {
     if (FOLLY_UNLIKELY(!hasValue())) {
       if (FOLLY_LIKELY(hasError())) {
@@ -1513,35 +1533,44 @@ struct Promise;
 
 template <typename Value, typename Error>
 struct PromiseReturn {
-  Optional<Expected<Value, Error>> storage_;
-  Promise<Value, Error>* promise_;
-  /* implicit */ PromiseReturn(Promise<Value, Error>& promise) noexcept
-      : promise_(&promise) {
-    promise_->value_ = &storage_;
+  Expected<Value, Error> storage_{EmptyTag{}};
+  Expected<Value, Error>*& pointer_;
+
+  /* implicit */ PromiseReturn(Promise<Value, Error>& p) noexcept
+      : pointer_{p.value_} {
+    pointer_ = &storage_;
   }
-  PromiseReturn(PromiseReturn&& that) noexcept
-      : PromiseReturn{*that.promise_} {}
+  PromiseReturn(PromiseReturn const&) = delete;
+  // letting dtor be trivial makes the coroutine crash
+  // TODO: fix clang/llvm codegen
   ~PromiseReturn() {}
-  /* implicit */ operator Expected<Value, Error>() & {
-    return std::move(*storage_);
+  /* implicit */ operator Expected<Value, Error>() {
+    // handle both deferred and eager return-object conversion behaviors
+    // see docs for detect_promise_return_object_eager_conversion
+    if (folly::coro::detect_promise_return_object_eager_conversion()) {
+      assert(storage_.which_ == expected_detail::Which::eEmpty);
+      return Expected<Value, Error>{EmptyTag{}, pointer_}; // eager
+    } else {
+      assert(storage_.which_ != expected_detail::Which::eEmpty);
+      return std::move(storage_); // deferred
+    }
   }
 };
 
 template <typename Value, typename Error>
 struct Promise {
-  Optional<Expected<Value, Error>>* value_ = nullptr;
+  Expected<Value, Error>* value_ = nullptr;
+
   Promise() = default;
   Promise(Promise const&) = delete;
-  // This should work regardless of whether the compiler generates:
-  //    folly::Expected<Value, Error> retobj{ p.get_return_object(); } // MSVC
-  // or:
-  //    auto retobj = p.get_return_object(); // clang
   PromiseReturn<Value, Error> get_return_object() noexcept { return *this; }
   coro::suspend_never initial_suspend() const noexcept { return {}; }
   coro::suspend_never final_suspend() const noexcept { return {}; }
   template <typename U = Value>
   void return_value(U&& u) {
-    value_->emplace(static_cast<U&&>(u));
+    auto& v = *value_;
+    ExpectedHelper::assume_empty(v);
+    v = static_cast<U&&>(u);
   }
   void unhandled_exception() {
     // Technically, throwing from unhandled_exception is underspecified:
@@ -1550,29 +1579,59 @@ struct Promise {
   }
 };
 
+template <typename Error>
+struct UnexpectedAwaitable {
+  Unexpected<Error> o_;
+
+  explicit UnexpectedAwaitable(Unexpected<Error> o) : o_(std::move(o)) {}
+
+  constexpr std::false_type await_ready() const noexcept { return {}; }
+  void await_resume() { compiler_may_unsafely_assume_unreachable(); }
+
+  template <typename U>
+  FOLLY_ALWAYS_INLINE void await_suspend(
+      coro::coroutine_handle<Promise<U, Error>> h) {
+    auto& v = *h.promise().value_;
+    ExpectedHelper::assume_empty(v);
+    v = std::move(o_);
+    h.destroy();
+  }
+};
+
 template <typename Value, typename Error>
-struct Awaitable {
+struct ExpectedAwaitable {
   Expected<Value, Error> o_;
 
-  explicit Awaitable(Expected<Value, Error> o) : o_(std::move(o)) {}
+  explicit ExpectedAwaitable(Expected<Value, Error> o) : o_(std::move(o)) {}
 
   bool await_ready() const noexcept { return o_.hasValue(); }
   Value await_resume() { return std::move(o_.value()); }
 
   // Explicitly only allow suspension into a Promise
   template <typename U>
-  void await_suspend(coro::coroutine_handle<Promise<U, Error>> h) {
-    *h.promise().value_ = makeUnexpected(std::move(o_.error()));
+  FOLLY_ALWAYS_INLINE void await_suspend(
+      coro::coroutine_handle<Promise<U, Error>> h) {
+    auto& v = *h.promise().value_;
+    ExpectedHelper::assume_empty(v);
+    v = makeUnexpected(std::move(o_.error()));
     // Abort the rest of the coroutine. resume() is not going to be called
     h.destroy();
   }
 };
+
 } // namespace expected_detail
 
-template <typename Value, typename Error>
-expected_detail::Awaitable<Value, Error>
-/* implicit */ operator co_await(Expected<Value, Error> o) {
-  return expected_detail::Awaitable<Value, Error>{std::move(o)};
+template <typename Error>
+expected_detail::UnexpectedAwaitable<Error>
+/* implicit */ operator co_await(Unexpected<Error> o) {
+  return expected_detail::UnexpectedAwaitable<Error>{std::move(o)};
 }
+
+template <typename Value, typename Error>
+expected_detail::ExpectedAwaitable<Value, Error>
+/* implicit */ operator co_await(Expected<Value, Error> o) {
+  return expected_detail::ExpectedAwaitable<Value, Error>{std::move(o)};
+}
+
 } // namespace folly
 #endif // FOLLY_HAS_COROUTINES

@@ -39,30 +39,9 @@
 namespace folly {
 
 class OpenSSLTicketHandler;
-
-/**
- * Override the default password collector.
- */
-class PasswordCollector {
- public:
-  virtual ~PasswordCollector() = default;
-  /**
-   * Interface for customizing how to collect private key password.
-   *
-   * By default, OpenSSL prints a prompt on screen and request for password
-   * while loading private key. To implement a custom password collector,
-   * implement this interface and register it with SSLContext.
-   *
-   * @param password Pass collected password back to OpenSSL
-   * @param size     Maximum length of password including nullptr character
-   */
-  virtual void getPassword(std::string& password, int size) const = 0;
-
-  /**
-   * Return a description of this collector for logging purposes
-   */
-  virtual const std::string& describe() const = 0;
-};
+namespace ssl {
+class PasswordCollector;
+}
 
 /**
  * Run SSL_accept via a runner
@@ -283,7 +262,7 @@ class SSLContext {
    * @return true if peer verification is required.
    *
    */
-  virtual bool needsPeerVerification() {
+  virtual bool needsPeerVerification() const {
     /* TODO this is ugly and i can't think of a reason this should exist
      * will think of what i want to do with this later
      */
@@ -310,7 +289,7 @@ class SSLContext {
    *
    * @return mode flags that can be used with SSL_set_verify
    */
-  virtual int getVerificationMode();
+  virtual int getVerificationMode() const;
 
   /**
    * Enable/Disable authentication. Peer name validation can only be done
@@ -460,13 +439,14 @@ class SSLContext {
    *
    * @param collector Instance of user defined password collector
    */
-  virtual void passwordCollector(std::shared_ptr<PasswordCollector> collector);
+  virtual void passwordCollector(
+      std::shared_ptr<ssl::PasswordCollector> collector);
   /**
    * Obtain password collector.
    *
    * @return User defined password collector
    */
-  virtual std::shared_ptr<PasswordCollector> passwordCollector() {
+  virtual std::shared_ptr<ssl::PasswordCollector> passwordCollector() {
     return collector_;
   }
 #if FOLLY_OPENSSL_HAS_SNI
@@ -540,7 +520,7 @@ class SSLContext {
   void setOptions(long options);
 
 #if FOLLY_OPENSSL_HAS_ALPN
-  std::string getAdvertisedNextProtocols();
+  std::string getAdvertisedNextProtocols() const;
 
   /**
    * Set the list of protocols that this SSL context supports. In client
@@ -609,8 +589,8 @@ class SSLContext {
    */
   static std::string getErrors(int errnoCopy);
 
-  bool checkPeerName() { return checkPeerName_; }
-  std::string peerFixedName() { return peerFixedName_; }
+  bool checkPeerName() const { return checkPeerName_; }
+  std::string peerFixedName() const { return peerFixedName_; }
 
 #if defined(SSL_MODE_HANDSHAKE_CUTTHROUGH)
   /**
@@ -633,11 +613,15 @@ class SSLContext {
     sslAcceptRunner_ = std::move(runner);
   }
 
-  const SSLAcceptRunner* sslAcceptRunner() { return sslAcceptRunner_.get(); }
+  const SSLAcceptRunner* sslAcceptRunner() const {
+    return sslAcceptRunner_.get();
+  }
 
   void setTicketHandler(std::unique_ptr<OpenSSLTicketHandler> handler);
 
-  OpenSSLTicketHandler* getTicketHandler() { return ticketHandler_.get(); }
+  OpenSSLTicketHandler* getTicketHandler() const {
+    return ticketHandler_.get();
+  }
 
   /**
    * Helper to match a hostname versus a pattern.
@@ -691,7 +675,7 @@ class SSLContext {
 
   bool checkPeerName_;
   std::string peerFixedName_;
-  std::shared_ptr<PasswordCollector> collector_;
+  std::shared_ptr<ssl::PasswordCollector> collector_;
 #if FOLLY_OPENSSL_HAS_SNI
   ServerNameCallback serverNameCb_;
   std::vector<ClientHelloCallback> clientHelloCbs_;
@@ -763,8 +747,5 @@ class SSLContext {
 };
 
 typedef std::shared_ptr<SSLContext> SSLContextPtr;
-
-std::ostream& operator<<(
-    std::ostream& os, const folly::PasswordCollector& collector);
 
 } // namespace folly

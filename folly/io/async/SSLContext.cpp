@@ -23,6 +23,7 @@
 #include <folly/SpinLock.h>
 #include <folly/ssl/Init.h>
 #include <folly/ssl/OpenSSLTicketHandler.h>
+#include <folly/ssl/PasswordCollector.h>
 #include <folly/ssl/SSLSessionManager.h>
 #include <folly/system/ThreadId.h>
 
@@ -331,7 +332,7 @@ int SSLContext::getVerificationMode(
   return mode;
 }
 
-int SSLContext::getVerificationMode() {
+int SSLContext::getVerificationMode() const {
   // the below or'ing is incorrect unless VERIFY_NONE is 0
   static_assert(SSL_VERIFY_NONE == 0);
   return getVerificationMode(verifyClient_) |
@@ -525,7 +526,7 @@ void SSLContext::setSupportedClientCertificateAuthorityNames(
 }
 
 void SSLContext::passwordCollector(
-    std::shared_ptr<PasswordCollector> collector) {
+    std::shared_ptr<ssl::PasswordCollector> collector) {
   if (collector == nullptr) {
     LOG(ERROR) << "passwordCollector: ignore invalid password collector";
     return;
@@ -616,7 +617,7 @@ int SSLContext::alpnSelectCallback(
   return SSL_TLSEXT_ERR_OK;
 }
 
-std::string SSLContext::getAdvertisedNextProtocols() {
+std::string SSLContext::getAdvertisedNextProtocols() const {
   if (advertisedNextProtocols_.empty()) {
     return "";
   }
@@ -905,11 +906,6 @@ void SSLContext::setTicketHandler(
   ticketHandler_ = std::move(handler);
   SSL_CTX_set_tlsext_ticket_key_cb(ctx_, dispatchTicketCrypto);
 #endif
-}
-
-std::ostream& operator<<(std::ostream& os, const PasswordCollector& collector) {
-  os << collector.describe();
-  return os;
 }
 
 } // namespace folly

@@ -47,18 +47,7 @@ namespace folly {
  *   If this is a problem then use FOLLY_DECLVAL(T&&) instead, or if T might
  *   be 'void', then use FOLLY_DECLVAL(std::add_rvalue_reference_t<T>).
  */
-#if __cplusplus >= 201703L
 #define FOLLY_DECLVAL(...) static_cast<__VA_ARGS__ (*)() noexcept>(nullptr)()
-#else
-// Don't have noexcept-qualified function types prior to C++17
-// so just fall back to a function-template.
-namespace detail {
-template <typename T>
-T declval() noexcept;
-} // namespace detail
-
-#define FOLLY_DECLVAL(...) ::folly::detail::declval<__VA_ARGS__>()
-#endif
 
 namespace detail {
 template <typename T>
@@ -176,8 +165,6 @@ constexpr like_t<Src, Dst>&& forward_like(Dst&& dst) noexcept {
  *    std::in_place_index
  */
 
-#if FOLLY_CPLUSPLUS >= 201703L
-
 using std::in_place_t;
 
 using std::in_place_type_t;
@@ -189,29 +176,6 @@ using std::in_place;
 using std::in_place_type;
 
 using std::in_place_index;
-
-#else
-
-struct in_place_t {
-  explicit in_place_t() = default;
-};
-FOLLY_INLINE_VARIABLE constexpr in_place_t in_place{};
-
-template <class>
-struct in_place_type_t {
-  explicit in_place_type_t() = default;
-};
-template <class T>
-FOLLY_INLINE_VARIABLE constexpr in_place_type_t<T> in_place_type{};
-
-template <std::size_t>
-struct in_place_index_t {
-  explicit in_place_index_t() = default;
-};
-template <std::size_t I>
-FOLLY_INLINE_VARIABLE constexpr in_place_index_t<I> in_place_index{};
-
-#endif
 
 /**
  * Initializer lists are a powerful compile time syntax introduced in C++11
@@ -486,10 +450,12 @@ struct unsafe_default_initialized_cv {
   FOLLY_ERASE constexpr /* implicit */ operator T() const noexcept {
 #if defined(__cpp_lib_is_constant_evaluated)
 #if __cpp_lib_is_constant_evaluated >= 201811L
+#if !defined(__MSVC_RUNTIME_CHECKS)
     if (!std::is_constant_evaluated()) {
       T uninit;
       return uninit;
     }
+#endif // !defined(__MSVC_RUNTIME_CHECKS)
 #endif
 #endif
     return T();
@@ -540,13 +506,8 @@ class to_narrow_convertible {
  public:
   explicit constexpr to_narrow_convertible(Src const& value) noexcept
       : value_(value) {}
-#if __cplusplus >= 201703L
   explicit to_narrow_convertible(to_narrow_convertible const&) = default;
   explicit to_narrow_convertible(to_narrow_convertible&&) = default;
-#else
-  to_narrow_convertible(to_narrow_convertible const&) = default;
-  to_narrow_convertible(to_narrow_convertible&&) = default;
-#endif
   to_narrow_convertible& operator=(to_narrow_convertible const&) = default;
   to_narrow_convertible& operator=(to_narrow_convertible&&) = default;
 
@@ -597,13 +558,8 @@ class to_integral_convertible {
   explicit constexpr to_integral_convertible(Src const& value) noexcept
       : value_(value) {}
 
-#if __cplusplus >= 201703L
   explicit to_integral_convertible(to_integral_convertible const&) = default;
   explicit to_integral_convertible(to_integral_convertible&&) = default;
-#else
-  to_integral_convertible(to_integral_convertible const&) = default;
-  to_integral_convertible(to_integral_convertible&&) = default;
-#endif
   to_integral_convertible& operator=(to_integral_convertible const&) = default;
   to_integral_convertible& operator=(to_integral_convertible&&) = default;
 
@@ -652,15 +608,10 @@ class to_floating_point_convertible {
   explicit constexpr to_floating_point_convertible(Src const& value) noexcept
       : value_(value) {}
 
-#if __cplusplus >= 201703L
   explicit to_floating_point_convertible(to_floating_point_convertible const&) =
       default;
   explicit to_floating_point_convertible(to_floating_point_convertible&&) =
       default;
-#else
-  to_floating_point_convertible(to_floating_point_convertible const&) = default;
-  to_floating_point_convertible(to_floating_point_convertible&&) = default;
-#endif
   to_floating_point_convertible& operator=(
       to_floating_point_convertible const&) = default;
   to_floating_point_convertible& operator=(to_floating_point_convertible&&) =
@@ -830,24 +781,4 @@ struct invocable_to_fn {
   }
 };
 FOLLY_INLINE_VARIABLE constexpr invocable_to_fn invocable_to{};
-
-// Simulate if constexpr in C++14
-template <bool>
-struct if_constexpr_fn {
-  template <class F, class G>
-  constexpr auto&& operator()(F&& f, G&&) const {
-    return static_cast<F&&>(f);
-  }
-};
-
-template <>
-struct if_constexpr_fn<false> {
-  template <class F, class G>
-  constexpr auto&& operator()(F&&, G&& g) const {
-    return static_cast<G&&>(g);
-  }
-};
-
-template <bool Cond>
-FOLLY_INLINE_VARIABLE constexpr if_constexpr_fn<Cond> if_constexpr{};
 } // namespace folly

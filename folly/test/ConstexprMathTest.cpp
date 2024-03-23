@@ -16,6 +16,7 @@
 
 #include <folly/ConstexprMath.h>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <type_traits>
@@ -458,6 +459,24 @@ TEST_F(ConstexprMathTest, constexpr_trunc_floating) {
   }
 }
 
+TEST_F(ConstexprMathTest, constexpr_trunc_integral) {
+  {
+    constexpr auto n = 0u;
+    constexpr auto a = folly::constexpr_trunc(n);
+    EXPECT_EQ(0u, a);
+  }
+  {
+    constexpr auto n = -1;
+    constexpr auto a = folly::constexpr_trunc(n);
+    EXPECT_EQ(-1, a);
+  }
+  {
+    constexpr auto n = 100;
+    constexpr auto a = folly::constexpr_trunc(n);
+    EXPECT_EQ(100, a);
+  }
+}
+
 TEST_F(ConstexprMathTest, constexpr_round_floating) {
   using lim = std::numeric_limits<double>;
 
@@ -742,6 +761,12 @@ TEST_F(ConstexprMathTest, constexpr_ceil_integral_round) {
     constexpr auto round = 0ll;
     constexpr auto rounded = folly::constexpr_ceil(roundable, round);
     EXPECT_EQ(-20ll, rounded);
+  }
+  {
+    constexpr auto roundable = 0ll;
+    constexpr auto round = std::numeric_limits<long long>::min();
+    constexpr auto rounded = folly::constexpr_ceil(roundable, round);
+    EXPECT_EQ(0ll, rounded);
   }
 }
 
