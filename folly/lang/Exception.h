@@ -77,7 +77,7 @@ using throw_exception_arg_ = //
         std::is_array<std::remove_reference_t<R>>::value,
         throw_exception_arg_array_,
         conditional_t<
-            is_trivially_copyable_v<remove_cvref_t<R>>,
+            std::is_trivially_copyable_v<remove_cvref_t<R>>,
             throw_exception_arg_trivial_,
             throw_exception_arg_base_>>;
 template <typename R>
@@ -309,12 +309,12 @@ catch_exception(Try&& t, Catch&& c, CatchA&&... a) noexcept(
 namespace detail {
 #if FOLLY_APPLE_IOS
 #if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_12_0
-FOLLY_INLINE_VARIABLE constexpr bool exception_ptr_access_ct = false;
+inline constexpr bool exception_ptr_access_ct = false;
 #else
-FOLLY_INLINE_VARIABLE constexpr bool exception_ptr_access_ct = true;
+inline constexpr bool exception_ptr_access_ct = true;
 #endif
 #else
-FOLLY_INLINE_VARIABLE constexpr bool exception_ptr_access_ct = true;
+inline constexpr bool exception_ptr_access_ct = true;
 #endif
 
 // 0 unknown, 1 true, -1 false

@@ -345,7 +345,7 @@ TEST(SemiFuture, ImplicitConstructor) {
 }
 
 TEST(SemiFuture, InPlaceConstructor) {
-  auto f = SemiFuture<std::pair<int, double>>(in_place, 5, 3.2);
+  auto f = SemiFuture<std::pair<int, double>>(std::in_place, 5, 3.2);
   EXPECT_EQ(5, f.value().first);
 }
 
@@ -720,7 +720,7 @@ TEST(SemiFuture, DeferWithinContinuation) {
   ASSERT_EQ(result, 7);
 }
 
-TEST(SemiFuture, onError) {
+TEST(SemiFuture, DeferError) {
   bool theFlag = false;
   auto flag = [&] { theFlag = true; };
 #define EXPECT_FLAG()     \

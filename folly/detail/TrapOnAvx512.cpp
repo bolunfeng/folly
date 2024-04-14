@@ -14,20 +14,28 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <folly/detail/TrapOnAvx512.h>
 
-#include <map>
+#include <folly/Portability.h>
 
-namespace folly {
-namespace ssl {
+#include <cstdint>
+#include <cstring>
 
-enum class LockType { MUTEX, SPINLOCK, NONE };
+namespace folly::detail {
+#if FOLLY_X64 && defined(__AVX512F__)
+namespace {
+void detectTrapOnAvx512Helper() {
+  __asm__ volatile("vscalefpd %zmm2, %zmm17, %zmm19");
+}
+} // namespace
 
-/**
- * Map between an OpenSSL lock (see constants in crypto/crypto.h) and the
- * implementation of the lock
- */
-using LockTypeMapping = std::map<int, LockType>;
-
-} // namespace ssl
-} // namespace folly
+bool hasTrapOnAvx512() {
+  static constexpr uint8_t kUd2[] = {0x0f, 0x0b};
+  return memcmp((void*)detectTrapOnAvx512Helper, kUd2, sizeof(kUd2)) == 0;
+}
+#else
+bool hasTrapOnAvx512() {
+  return false;
+}
+#endif
+} // namespace folly::detail

@@ -51,7 +51,6 @@
 #include <folly/portability/GTest.h>
 #include <folly/portability/OpenSSL.h>
 #include <folly/portability/Unistd.h>
-#include <folly/ssl/Init.h>
 
 #ifdef __linux__
 #include <dlfcn.h>
@@ -521,7 +520,6 @@ TEST(AsyncSSLSocketTest, SocketWithDelay) {
   cerr << "SocketWithDelay test completed" << endl;
 }
 
-#if FOLLY_OPENSSL_HAS_ALPN
 class NextProtocolTest : public Test {
   // For matching protos
  public:
@@ -674,9 +672,6 @@ TEST_F(NextProtocolTest, AlpnNotAllowMismatchWithoutOverlap) {
   EXPECT_EQ(server->getClientAlpns(), std::vector<std::string>({"blub"}));
 }
 
-#endif
-
-#ifndef OPENSSL_NO_TLSEXT
 /**
  * 1. Client sends TLSEXT_HOSTNAME in client hello.
  * 2. Server found a match SSL_CTX and use this SSL_CTX to
@@ -856,7 +851,6 @@ TEST(AsyncSSLSocketTest, SetSupportedApplicationProtocols) {
           server.getApplicationProtocol()) == 0);
 }
 
-#endif
 /**
  * Test SSL client socket
  */

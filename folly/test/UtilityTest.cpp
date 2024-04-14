@@ -173,18 +173,6 @@ TEST_F(UtilityTest, copy_noexcept_spec) {
   EXPECT_TRUE(noexcept(folly::copy(std::move(thr)))); // note: does not copy
 }
 
-TEST_F(UtilityTest, as_const) {
-  struct S {
-    bool member() { return false; }
-    bool member() const { return true; }
-  };
-  S s;
-  EXPECT_FALSE(s.member());
-  EXPECT_TRUE(folly::as_const(s).member());
-  EXPECT_EQ(&s, &folly::as_const(s));
-  EXPECT_TRUE(noexcept(folly::as_const(s)));
-}
-
 template <typename T>
 static T& as_mutable(T const& t) {
   return const_cast<T&>(t);
@@ -264,6 +252,17 @@ TEST_F(UtilityTest, NonCopyableNonMovable) {
   static_assert(
       !std::is_move_constructible<FooBar>::value,
       "Should not be move constructible");
+}
+
+TEST_F(UtilityTest, noop) {
+  auto fn = folly::variadic_noop;
+  EXPECT_TRUE((std::is_nothrow_invocable_r_v<void, decltype(fn)>));
+}
+
+TEST_F(UtilityTest, constant_of) {
+  auto fn = folly::variadic_constant_of<3>;
+  EXPECT_TRUE((std::is_nothrow_invocable_r_v<int, decltype(fn)>));
+  EXPECT_EQ(3, fn());
 }
 
 TEST_F(UtilityTest, to_signed) {

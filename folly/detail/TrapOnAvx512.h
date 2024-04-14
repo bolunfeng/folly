@@ -14,15 +14,8 @@
  * limitations under the License.
  */
 
-#include <folly/lang/Launder.h>
+#pragma once
 
-#include <folly/portability/GTest.h>
-
-using namespace folly;
-
-TEST(LaunderTest, Basics) {
-  int a;
-  int* pa = &a;
-  EXPECT_EQ(pa, launder(pa));
-  EXPECT_TRUE(noexcept(launder(pa)));
-}
+namespace folly::detail {
+bool hasTrapOnAvx512();
+} // namespace folly::detail

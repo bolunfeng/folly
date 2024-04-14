@@ -112,6 +112,8 @@ class FutureSplitter;
 
 namespace futures {
 namespace detail {
+class FutureBaseHelper;
+
 template <class T>
 class FutureBase {
  protected:
@@ -150,8 +152,8 @@ class FutureBase {
       class... Args,
       typename std::enable_if<std::is_constructible<T, Args&&...>::value, int>::
           type = 0>
-  explicit FutureBase(in_place_t, Args&&... args)
-      : core_(Core::make(in_place, static_cast<Args&&>(args)...)) {}
+  explicit FutureBase(std::in_place_t, Args&&... args)
+      : core_(Core::make(std::in_place, static_cast<Args&&>(args)...)) {}
 
   FutureBase(FutureBase<T> const&) = delete;
   FutureBase(SemiFuture<T>&&) noexcept;
@@ -349,6 +351,7 @@ class FutureBase {
   void cancel() { raise(FutureCancellation()); }
 
  protected:
+  friend class FutureBaseHelper;
   friend class Promise<T>;
   template <class>
   friend class SemiFuture;
@@ -415,13 +418,17 @@ class FutureBase {
   // Variant: returns a value
   // e.g. f.thenTry([](Try<T> t){ return t.value(); });
   template <typename F, typename R>
-  typename std::enable_if<!R::ReturnsFuture::value, typename R::Return>::type
+  typename std::enable_if< //
+      !R::ReturnsFuture::value,
+      Future<typename R::value_type>>::type
   thenImplementation(F&& func, R, InlineContinuation);
 
   // Variant: returns a Future
   // e.g. f.thenTry([](Try<T> t){ return makeFuture<T>(t); });
   template <typename F, typename R>
-  typename std::enable_if<R::ReturnsFuture::value, typename R::Return>::type
+  typename std::enable_if< //
+      R::ReturnsFuture::value,
+      Future<typename R::value_type>>::type
   thenImplementation(F&& func, R, InlineContinuation);
 };
 template <class T>
@@ -549,8 +556,8 @@ class SemiFuture : private futures::detail::FutureBase<T> {
       class... Args,
       typename std::enable_if<std::is_constructible<T, Args&&...>::value, int>::
           type = 0>
-  explicit SemiFuture(in_place_t, Args&&... args)
-      : Base(in_place, static_cast<Args&&>(args)...) {}
+  explicit SemiFuture(std::in_place_t, Args&&... args)
+      : Base(std::in_place, static_cast<Args&&>(args)...) {}
 
   SemiFuture(SemiFuture<T> const&) = delete;
   // movable
@@ -951,6 +958,7 @@ class SemiFuture : private futures::detail::FutureBase<T> {
 
  private:
   friend class Promise<T>;
+  friend class futures::detail::FutureBaseHelper;
   template <class>
   friend class futures::detail::FutureBase;
   template <class>
@@ -1078,8 +1086,8 @@ class Future : private futures::detail::FutureBase<T> {
       class... Args,
       typename std::enable_if<std::is_constructible<T, Args&&...>::value, int>::
           type = 0>
-  explicit Future(in_place_t, Args&&... args)
-      : Base(in_place, static_cast<Args&&>(args)...) {}
+  explicit Future(std::in_place_t, Args&&... args)
+      : Base(std::in_place, static_cast<Args&&>(args)...) {}
 
   Future(Future<T> const&) = delete;
   // movable
@@ -1531,110 +1539,6 @@ class Future : private futures::detail::FutureBase<T> {
   /// - `RESULT.valid() == true`
   Future<Unit> unit() && { return std::move(*this).then(); }
 
-  /// Set an error continuation for this Future. The continuation should take an
-  /// argument of the type that you want to catch, and should return a value of
-  /// the same type as this Future, or a Future of that type (see overload
-  /// below).
-  ///
-  /// Example:
-  ///
-  ///   makeFuture()
-  ///     .thenValue([](folly::Unit&&) {
-  ///       throw std::runtime_error("oh no!");
-  ///       return 42;
-  ///     })
-  ///     .thenError([](folly::exception_wrapper&& e) {
-  ///       LOG(INFO) << "std::runtime_error: " << e.get_exception()->what();
-  ///       return -1; // or makeFuture<int>(-1)
-  ///     });
-  ///
-  /// Preconditions:
-  ///
-  /// - `valid() == true` (else throws FutureInvalid)
-  ///
-  /// Postconditions:
-  ///
-  /// - Calling code should act as if `valid() == false`,
-  ///   i.e., as if `*this` was moved into RESULT.
-  /// - `RESULT.valid() == true`
-  template <class F>
-  [[deprecated(
-      "onError loses the attached executor and is weakly typed. Please move to thenError instead.")]]
-  typename std::enable_if<
-      !is_invocable_v<F, exception_wrapper> &&
-          !futures::detail::Extract<F>::ReturnsFuture::value,
-      Future<T>>::type
-  onError(F&& func) && = delete;
-
-  /// Overload of onError where the error continuation returns a Future<T>
-  ///
-  /// Preconditions:
-  ///
-  /// - `valid() == true` (else throws FutureInvalid)
-  ///
-  /// Postconditions:
-  ///
-  /// - Calling code should act as if `valid() == false`,
-  ///   i.e., as if `*this` was moved into RESULT.
-  /// - `RESULT.valid() == true`
-  template <class F>
-  [[deprecated(
-      "onError loses the attached executor and is weakly typed. Please move to thenError instead.")]]
-  typename std::enable_if<
-      !is_invocable_v<F, exception_wrapper> &&
-          futures::detail::Extract<F>::ReturnsFuture::value,
-      Future<T>>::type
-  onError(F&& func) && = delete;
-
-  /// Overload of onError that takes exception_wrapper and returns Future<T>
-  ///
-  /// Preconditions:
-  ///
-  /// - `valid() == true` (else throws FutureInvalid)
-  ///
-  /// Postconditions:
-  ///
-  /// - Calling code should act as if `valid() == false`,
-  ///   i.e., as if `*this` was moved into RESULT.
-  /// - `RESULT.valid() == true`
-  template <class F>
-  [[deprecated(
-      "onError loses the attached executor and is weakly typed. Please move to thenError instead.")]]
-  typename std::enable_if<
-      is_invocable_v<F, exception_wrapper> &&
-          futures::detail::Extract<F>::ReturnsFuture::value,
-      Future<T>>::type
-  onError(F&& func) && = delete;
-
-  /// Overload of onError that takes exception_wrapper and returns T
-  ///
-  /// Preconditions:
-  ///
-  /// - `valid() == true` (else throws FutureInvalid)
-  ///
-  /// Postconditions:
-  ///
-  /// - Calling code should act as if `valid() == false`,
-  ///   i.e., as if `*this` was moved into RESULT.
-  /// - `RESULT.valid() == true`
-  template <class F>
-  [[deprecated(
-      "onError loses the attached executor and is weakly typed. Please move to thenError instead.")]]
-  typename std::enable_if<
-      is_invocable_v<F, exception_wrapper> &&
-          !futures::detail::Extract<F>::ReturnsFuture::value,
-      Future<T>>::type
-  onError(F&& func) && = delete;
-
-  template <class R, class... Args>
-  Future<T> onError(R (&func)(Args...)) && = delete;
-
-  // clang-format off
-  template <class F>
-  [[deprecated(
-      "onError loses the attached executor and is weakly typed. Please move to thenError instead.")]]
-  Future<T> onError(F&& func) & = delete;
-
   /// func is like std::function<void()> and is executed unconditionally, and
   /// the value/exception is passed through to the resulting Future.
   /// func shouldn't throw, but if it does it will be captured and propagated,
@@ -1948,6 +1852,7 @@ class Future : private futures::detail::FutureBase<T> {
 
  protected:
   friend class Promise<T>;
+  friend class futures::detail::FutureBaseHelper;
   template <class>
   friend class futures::detail::FutureBase;
   template <class>
@@ -2226,8 +2131,7 @@ auto mapTry(Executor& exec, Collection&& c, F&& func)
 /// thunk behaves like std::function<Future<T2>(void)> or
 /// std::function<SemiFuture<T2>(void)>
 template <class F>
-auto when(bool p, F&& thunk)
-    -> decltype(std::declval<invoke_result_t<F>>().unit());
+auto when(bool p, F&& thunk) -> decltype(static_cast<F&&>(thunk)().unit());
 
 SemiFuture<Unit> wait(std::unique_ptr<fibers::Baton> baton);
 SemiFuture<Unit> wait(std::shared_ptr<fibers::Baton> baton);
@@ -2426,8 +2330,9 @@ inline Future<Unit> via(Executor::KeepAlive<> executor, int8_t priority);
 /// This is semantically equivalent to via(executor).then(func), but
 /// easier to read and slightly more efficient.
 template <class Func>
-auto via(Executor::KeepAlive<>, Func&& func) -> Future<
-    typename isFutureOrSemiFuture<decltype(std::declval<Func>()())>::Inner>;
+auto via(Executor::KeepAlive<>, Func&& func)
+    -> Future<typename isFutureOrSemiFuture<
+        decltype(static_cast<Func&&>(func)())>::Inner>;
 
 /** When all the input Futures complete, the returned Future will complete.
   Errors do not cause early termination; this Future will always succeed

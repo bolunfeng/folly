@@ -14,24 +14,16 @@
  * limitations under the License.
  */
 
-#include <folly/ssl/Init.h>
+#include <folly/detail/TrapOnAvx512.h>
 
-namespace folly {
-namespace ssl {
+#include <folly/portability/GTest.h>
 
-void init() {}
+namespace folly::detail {
 
-void cleanup() {}
-
-void markInitialized() {}
-
-void setLockTypesAndInit(LockTypeMapping) {}
-
-void setLockTypes(LockTypeMapping) {}
-
-bool isLockDisabled(int) {
-  return false;
+// This target is not built with BOLT `--trap-avx512`, so it should always
+// return false (including on non-x64 platforms).
+TEST(TrapOnAvx512TestNegative, Basic) {
+  ASSERT_FALSE(hasTrapOnAvx512());
 }
 
-} // namespace ssl
-} // namespace folly
+} // namespace folly::detail

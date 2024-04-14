@@ -122,7 +122,7 @@ struct policy_size_type {
 
 template <bool Value>
 struct policy_in_situ_only {
-  using in_situ_only = bool_constant<Value>;
+  using in_situ_only = std::bool_constant<Value>;
 };
 
 } // namespace small_vector_policy
@@ -147,7 +147,7 @@ namespace detail {
  * extra copies and moves for non-trivial types.
  */
 template <class T, class Create>
-typename std::enable_if<!is_trivially_copyable_v<T>>::type
+typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -201,7 +201,7 @@ moveObjectsRightAndCreate(
 // memory may be uninitialized, and std::move_backward() won't work when it
 // can't memmove().
 template <class T, class Create>
-typename std::enable_if<is_trivially_copyable_v<T>>::type
+typename std::enable_if<std::is_trivially_copyable_v<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -337,7 +337,7 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
    * ranges don't overlap.
    */
   template <class T>
-  typename std::enable_if<!is_trivially_copyable_v<T>>::type
+  typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
   moveToUninitialized(T* first, T* last, T* out) {
     std::size_t idx = 0;
     {
@@ -358,8 +358,8 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
 
   // Specialization for trivially copyable types.
   template <class T>
-  typename std::enable_if<is_trivially_copyable_v<T>>::type moveToUninitialized(
-      T* first, T* last, T* out) {
+  typename std::enable_if<std::is_trivially_copyable_v<T>>::type
+  moveToUninitialized(T* first, T* last, T* out) {
     std::memmove(
         static_cast<void*>(out),
         static_cast<void const*>(first),
@@ -680,7 +680,7 @@ class small_vector
    */
   void swap(small_vector& o) noexcept(
       std::is_nothrow_move_constructible<Value>::value&&
-          IsNothrowSwappable<Value>::value) {
+          std::is_nothrow_swappable_v<Value>) {
     using std::swap; // Allow ADL on swap for our value_type.
 
     if (this->isExtern() && o.isExtern()) {
@@ -1035,7 +1035,7 @@ class small_vector
   }
 
   void copyWholeInlineStorageTrivial(small_vector const& o) {
-    static_assert(is_trivially_copyable_v<Value>);
+    static_assert(std::is_trivially_copyable_v<Value>);
     std::copy(o.u.buffer(), o.u.buffer() + MaxInline, u.buffer());
     this->setSize(o.size());
   }
@@ -1332,7 +1332,7 @@ class small_vector
       sizeof(InlineStorageType) <= hardware_constructive_interference_size / 2;
 
   static constexpr bool kShouldCopyWholeInlineStorageTrivial =
-      is_trivially_copyable_v<Value> && kMayCopyWholeInlineStorage;
+      std::is_trivially_copyable_v<Value> && kMayCopyWholeInlineStorage;
 
   static bool constexpr kHasInlineCapacity = !BaseType::kAlwaysUseHeap &&
       sizeof(HeapPtrWithCapacity) < sizeof(InlineStorageType);
