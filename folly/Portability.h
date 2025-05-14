@@ -35,7 +35,11 @@
 static_assert(FOLLY_CPLUSPLUS >= 201703L, "__cplusplus >= 201703L");
 
 #if defined(__GNUC__) && !defined(__clang__)
-static_assert(__GNUC__ >= 8, "__GNUC__ >= 8");
+#if defined(FOLLY_CONFIG_TEMPORARY_DOWNGRADE_GCC)
+static_assert(__GNUC__ >= 9, "__GNUC__ >= 9");
+#else
+static_assert(__GNUC__ >= 10, "__GNUC__ >= 10");
+#endif
 #endif
 
 #if defined(_MSC_VER)
@@ -137,6 +141,12 @@ constexpr bool kHasUnalignedAccess = false;
 #define FOLLY_RISCV64 0
 #endif
 
+#if defined(__wasm__)
+#define FOLLY_WASM 1
+#else
+#define FOLLY_WASM 0
+#endif
+
 namespace folly {
 constexpr bool kIsArchArm = FOLLY_ARM == 1;
 constexpr bool kIsArchAmd64 = FOLLY_X64 == 1;
@@ -144,6 +154,7 @@ constexpr bool kIsArchAArch64 = FOLLY_AARCH64 == 1;
 constexpr bool kIsArchPPC64 = FOLLY_PPC64 == 1;
 constexpr bool kIsArchS390X = FOLLY_S390X == 1;
 constexpr bool kIsArchRISCV64 = FOLLY_RISCV64 == 1;
+constexpr bool kIsArchWasm = FOLLY_WASM == 1;
 } // namespace folly
 
 namespace folly {
@@ -373,6 +384,62 @@ constexpr auto kHasWeakSymbols = false;
 #endif
 #endif
 
+#ifndef FOLLY_ARM_FEATURE_CRYPTO
+#ifdef __ARM_FEATURE_CRYPTO
+#define FOLLY_ARM_FEATURE_CRYPTO 1
+#else
+#define FOLLY_ARM_FEATURE_CRYPTO 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_AES
+#ifdef __ARM_FEATURE_AES
+#define FOLLY_ARM_FEATURE_AES 1
+#else
+#define FOLLY_ARM_FEATURE_AES 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_SHA2
+#ifdef __ARM_FEATURE_SHA2
+#define FOLLY_ARM_FEATURE_SHA2 1
+#else
+#define FOLLY_ARM_FEATURE_SHA2 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_SHA3
+#ifdef __ARM_FEATURE_SHA3
+#define FOLLY_ARM_FEATURE_SHA3 1
+#else
+#define FOLLY_ARM_FEATURE_SHA3 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_SVE
+#ifdef __ARM_FEATURE_SVE
+#define FOLLY_ARM_FEATURE_SVE 1
+#else
+#define FOLLY_ARM_FEATURE_SVE 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_SVE2
+#ifdef __ARM_FEATURE_SVE2
+#define FOLLY_ARM_FEATURE_SVE2 1
+#else
+#define FOLLY_ARM_FEATURE_SVE2 0
+#endif
+#endif
+
+#ifndef FOLLY_ARM_FEATURE_NEON_SVE_BRIDGE
+#if FOLLY_ARM_FEATURE_SVE && __has_include(<arm_neon_sve_bridge.h>)
+#define FOLLY_ARM_FEATURE_NEON_SVE_BRIDGE 1
+#else
+#define FOLLY_ARM_FEATURE_NEON_SVE_BRIDGE 0
+#endif
+#endif
+
 // RTTI may not be enabled for this compilation unit.
 #if defined(__GXX_RTTI) || defined(__cpp_rtti) || \
     (defined(_MSC_VER) && defined(_CPPRTTI))
@@ -436,6 +503,12 @@ constexpr auto kIsMobile = false;
 constexpr auto kIsLinux = true;
 #else
 constexpr auto kIsLinux = false;
+#endif
+
+#if defined(__FreeBSD__)
+constexpr auto kIsFreeBSD = true;
+#else
+constexpr auto kIsFreeBSD = false;
 #endif
 
 #if defined(_WIN32)
@@ -520,6 +593,16 @@ constexpr auto kCpplibVer = 0;
 #endif
 } // namespace folly
 
+#define FOLLY_PRAGMA_DETAIL_STR(X) #X
+
+#if defined(_MSC_VER)
+#define FOLLY_PRAGMA_UNROLL_N(N)
+#elif defined(__GNUC__)
+#define FOLLY_PRAGMA_UNROLL_N(N) _Pragma(FOLLY_PRAGMA_DETAIL_STR(GCC unroll(N)))
+#else
+#define FOLLY_PRAGMA_UNROLL_N(N) _Pragma(FOLLY_PRAGMA_DETAIL_STR(unroll(N)))
+#endif
+
 //  MSVC does not permit:
 //
 //    extern int const num;
@@ -547,6 +630,17 @@ constexpr auto kCpplibVer = 0;
 #define FOLLY_CXX20_CONSTEXPR
 #endif
 
+//  FOLLY_CXX23_CONSTEXPR
+//
+//  C++23 permits more cases to be marked constexpr, including definitions of
+//  variables of non-literal type in constexpr function as long as they are not
+//  constant-evaluated.
+#if FOLLY_CPLUSPLUS >= 202302L
+#define FOLLY_CXX23_CONSTEXPR constexpr
+#else
+#define FOLLY_CXX23_CONSTEXPR
+#endif
+
 // C++20 constinit
 #if defined(__cpp_constinit) && __cpp_constinit >= 201907L
 #define FOLLY_CONSTINIT constinit
@@ -556,17 +650,23 @@ constexpr auto kCpplibVer = 0;
 
 #if defined(FOLLY_CFG_NO_COROUTINES)
 #define FOLLY_HAS_COROUTINES 0
+#define FOLLY_HAS_IMMOVABLE_COROUTINES 0
 #else
 // folly::coro requires C++17 support
 #if defined(__NVCC__)
 // For now, NVCC matches other compilers but does not offer coroutines.
 #define FOLLY_HAS_COROUTINES 0
-#elif defined(_WIN32) && defined(__clang__) && !defined(LLVM_COROUTINES)
+#elif defined(_WIN32) && defined(__clang__) && !defined(LLVM_COROUTINES) && \
+    !defined(LLVM_COROUTINES_CPP20)
 // LLVM and MSVC coroutines are ABI incompatible, so for the MSVC implementation
 // of <experimental/coroutine> on Windows we *don't* have coroutines.
 //
 // LLVM_COROUTINES indicates that LLVM compatible header is added to include
 // path and can be used.
+//
+// LLVM_COROUTINES_CPP20 indicates that an LLVM compatible header using
+// <coroutine> is added to the include path and can be used.
+
 //
 // Worse, if we define FOLLY_HAS_COROUTINES 1 we will include
 // <experimental/coroutine> which will conflict with anyone who wants to load
@@ -587,7 +687,38 @@ constexpr auto kCpplibVer = 0;
 #else
 #define FOLLY_HAS_COROUTINES 0
 #endif
+
+// NB: The C++20 requirement could be relaxed, but there's no clear benefit as
+// of right now.
+#if !FOLLY_HAS_COROUTINES || FOLLY_CPLUSPLUS < 202002L
+#define FOLLY_HAS_IMMOVABLE_COROUTINES 0
+// This logic is written as "good until proven broken" because it's possible
+// that there's a good compiler older than the oldest good version I checked.
+#elif defined(__clang_major__) && __clang_major__ <= 14
+//  - 12.0.1 is bad: https://godbolt.org/z/6s489xE8P
+//  - 14 is still bad: https://godbolt.org/z/nW1W8cWvb
+//  - 15.0.0 is good: https://godbolt.org/z/Tco4c9hbq and sEaKKTf8r
+#define FOLLY_HAS_IMMOVABLE_COROUTINES 0
+// BEWARE: Older versions of Clang pretend to be MSVC and define
+// `_MSC_FULL_VER`, but fortunately none of clang 15, 16, 17, 18, 19 do this,
+// so this branch should not result in a false-negative.
+#elif defined(_MSC_FULL_VER) && _MSC_FULL_VER <= 192930040
+//  - 192930040 is bad: https://godbolt.org/z/E797W8xTT
+//  - 192930153 is good: https://godbolt.org/z/cM4nW5rTK
+#define FOLLY_HAS_IMMOVABLE_COROUTINES 0
+#else
+#define FOLLY_HAS_IMMOVABLE_COROUTINES 1 // good until proven broken
+#endif
 #endif // FOLLY_CFG_NO_COROUTINES
+
+// It'd be possible to relax this, by refactoring `folly/result` code down to
+// C++17, and by only blocking the coroutine support for non-coro compiles.
+// However, `result<T>` is primarily targeted at newer codebases.
+#if FOLLY_CPLUSPLUS >= 202002L && FOLLY_HAS_COROUTINES
+#define FOLLY_HAS_RESULT 1
+#else
+#define FOLLY_HAS_RESULT 0
+#endif
 
 // C++20 consteval
 #if FOLLY_CPLUSPLUS >= 202002L

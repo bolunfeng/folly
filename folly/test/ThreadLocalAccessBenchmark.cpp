@@ -50,42 +50,43 @@ void runTest(int iters, int numThreads) {
 
   std::vector<std::thread> threads;
   for (int i = 0; i < numThreads; i++) {
-    threads.push_back(std::thread([i,
-                                   numThreads,
-                                   &stci,
-                                   &m,
-                                   &mw,
-                                   &cv,
-                                   &cvw,
-                                   &running,
-                                   &numRunning]() mutable {
-      stci[i].set();
+    threads.push_back(std::thread(
+        [i,
+         numThreads,
+         &stci,
+         &m,
+         &mw,
+         &cv,
+         &cvw,
+         &running,
+         &numRunning]() mutable {
+          stci[i].set();
 
-      // notify if all the threads have created the
-      // thread local var
-      bool notify = false;
-      {
-        std::lock_guard<std::mutex> lk(m);
-        if (++numRunning == numThreads) {
-          notify = true;
-        }
-      }
+          // notify if all the threads have created the
+          // thread local var
+          bool notify = false;
+          {
+            std::lock_guard lk(m);
+            if (++numRunning == numThreads) {
+              notify = true;
+            }
+          }
 
-      if (notify) {
-        cv.notify_one();
-      }
+          if (notify) {
+            cv.notify_one();
+          }
 
-      // now wait
-      {
-        std::unique_lock<std::mutex> lk(mw);
-        cvw.wait(lk, [&]() { return !running; });
-      }
-    }));
+          // now wait
+          {
+            std::unique_lock lk(mw);
+            cvw.wait(lk, [&]() { return !running; });
+          }
+        }));
   }
 
   // wait for the threads to create the thread locals
   {
-    std::unique_lock<std::mutex> lk(m);
+    std::unique_lock lk(m);
     cv.wait(lk, [&]() { return numRunning == numThreads; });
   }
 
@@ -99,7 +100,7 @@ void runTest(int iters, int numThreads) {
   susp.rehire();
 
   {
-    std::lock_guard<std::mutex> lk(mw);
+    std::lock_guard lk(mw);
     running = false;
   }
 
@@ -120,7 +121,7 @@ BENCHMARK_PARAM(runTest, 2048)
 BENCHMARK_DRAW_LINE();
 
 int main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
 
   return 0;

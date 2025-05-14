@@ -20,6 +20,7 @@
 #include <folly/io/async/test/UndelayedDestruction.h>
 #include <folly/io/async/test/Util.h>
 #include <folly/portability/GTest.h>
+#include <folly/portability/Unistd.h>
 
 using namespace folly;
 using std::chrono::milliseconds;
@@ -595,10 +596,9 @@ TEST(HHWheelTimerDetailsTest, Divider) {
           EXPECT_TRUE(
               expected == calc ||
               (calc >= expected && calc <= expected + allowedError))
-              << "expected=" << expected << " calc=" << calc
-              << " allowedError=" << allowedError << ": " << num << "/" << den
-              << " ns=" << numShift << " + " << numOffset << " ds=" << denShift
-              << " + " << denOffset;
+              << "expected=" << expected << " calc=" << calc << " allowedError="
+              << allowedError << ": " << num << "/" << den << " ns=" << numShift
+              << " + " << numOffset << " ds=" << denShift << " + " << denOffset;
         }
       }
     }

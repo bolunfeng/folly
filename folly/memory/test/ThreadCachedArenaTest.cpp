@@ -82,7 +82,7 @@ void ArenaTester::verify() {
 
 void ArenaTester::merge(ArenaTester&& other) {
   {
-    std::lock_guard<std::mutex> lock(mergeMutex_);
+    std::lock_guard lock(mergeMutex_);
     std::move(
         other.areas_.begin(), other.areas_.end(), std::back_inserter(areas_));
   }
@@ -267,7 +267,7 @@ BENCHMARK_DRAW_LINE();
 
 int main(int argc, char* argv[]) {
   testing::InitGoogleTest(&argc, argv);
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   auto ret = RUN_ALL_TESTS();
   if (!ret && FLAGS_benchmark) {
     folly::runBenchmarks();

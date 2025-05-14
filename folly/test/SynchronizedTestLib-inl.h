@@ -86,8 +86,9 @@ void runParallel(size_t numThreads, const Function& function) {
   // Wait for all threads to become ready
   {
     auto readyLocked = threadsReady.lock();
-    readyCV.wait(
-        readyLocked.as_lock(), [&] { return *readyLocked == numThreads; });
+    readyCV.wait(readyLocked.as_lock(), [&] {
+      return *readyLocked == numThreads;
+    });
   }
   // Now signal the threads that they can go
   go = true;
@@ -225,8 +226,9 @@ testWithLock() {
   });
 
   obj.withWLock([](auto& lockedObj) { lockedObj.push_back(12); });
-  obj.withWLock(
-      [](const auto& lockedObj) { EXPECT_EQ(1003, lockedObj.size()); });
+  obj.withWLock([](const auto& lockedObj) {
+    EXPECT_EQ(1003, lockedObj.size());
+  });
   constObj.withWLock([](const auto& lockedObj) {
     EXPECT_EQ(1003, lockedObj.size());
     EXPECT_EQ(12, lockedObj.back());
@@ -235,8 +237,9 @@ testWithLock() {
     EXPECT_EQ(1003, lockedObj.size());
     EXPECT_EQ(12, lockedObj.back());
   });
-  constObj.withRLock(
-      [](const auto& lockedObj) { EXPECT_EQ(1003, lockedObj.size()); });
+  constObj.withRLock([](const auto& lockedObj) {
+    EXPECT_EQ(1003, lockedObj.size());
+  });
   obj.withWLock([](auto& lockedObj) { lockedObj.pop_back(); });
 
   // Test withWLockPtr() and withRLockPtr()
@@ -302,8 +305,9 @@ testWithLock() {
   });
 
   obj.withLock([](auto& lockedObj) { lockedObj.push_back(12); });
-  obj.withLock(
-      [](const auto& lockedObj) { EXPECT_EQ(1003, lockedObj.size()); });
+  obj.withLock([](const auto& lockedObj) {
+    EXPECT_EQ(1003, lockedObj.size());
+  });
   obj.withLock([](auto& lockedObj) { lockedObj.pop_back(); });
 
   // Test withLockPtr()
@@ -449,9 +453,13 @@ template <class Mutex>
     EXPECT_EQ(1000, obj2.contextualLock()->size());
   }
 
-  SYNCHRONIZED_CONST(obj) { EXPECT_EQ(1001, obj.size()); }
+  SYNCHRONIZED_CONST(obj) {
+    EXPECT_EQ(1001, obj.size());
+  }
 
-  SYNCHRONIZED(lockedObj, *&obj) { lockedObj.front() = 2; }
+  SYNCHRONIZED(lockedObj, *&obj) {
+    lockedObj.front() = 2;
+  }
 
   EXPECT_EQ(1001, obj.contextualLock()->size());
   EXPECT_EQ(10, obj.contextualLock()->back());

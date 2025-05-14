@@ -114,10 +114,11 @@ TEST_F(LoggerTest, formatError) {
   // differently on different platforms.
   EXPECT_THAT(
       messages[0].first.getMessage(),
-      MatchesRegex(R"(error formatting log message: )"
-                   R"(.*invalid .* specifier; )"
-                   R"(format string: "param1: \{:06d\}, param2: \{:6.3f\}", )"
-                   R"(arguments: 1234, hello world!)"));
+      MatchesRegex(
+          R"(error formatting log message: )"
+          R"(.*invalid .* specifier; )"
+          R"(format string: "param1: \{:06d\}, param2: \{:6.3f\}", )"
+          R"(arguments: 1234, hello world!)"));
   EXPECT_EQ("LoggerTest.cpp", pathBasename(messages[0].first.getFileName()));
   EXPECT_EQ(LogLevel::WARN, messages[0].first.getLevel());
   EXPECT_FALSE(messages[0].first.containsNewlines());
@@ -151,12 +152,12 @@ class FormattableButNoToString {
 namespace fmt {
 template <>
 struct formatter<ToStringFailure> : formatter<std::string> {
-  auto format(ToStringFailure, format_context& ctx) { return ctx.out(); }
+  auto format(ToStringFailure, format_context& ctx) const { return ctx.out(); }
 };
 
 template <>
 struct formatter<FormattableButNoToString> : formatter<std::string> {
-  auto format(FormattableButNoToString, format_context& ctx) {
+  auto format(FormattableButNoToString, format_context& ctx) const {
     throw std::runtime_error("test");
     return ctx.out();
   }
@@ -205,10 +206,11 @@ TEST_F(LoggerTest, formatFallbackError) {
   ASSERT_EQ(1, messages.size());
   EXPECT_THAT(
       messages[0].first.getMessage(),
-      MatchesRegex(R"(error formatting log message: .*format_error.*; )"
-                   R"(format string: "param1: \{\}, param2: \{\}, \{\}", )"
-                   R"(arguments: 1234, )"
-                   R"(\[(.*ToStringFailure.*|object) of size (.*):.*\])"));
+      MatchesRegex(
+          R"(error formatting log message: .*format_error.*; )"
+          R"(format string: "param1: \{\}, param2: \{\}, \{\}", )"
+          R"(arguments: 1234, )"
+          R"(\[(.*ToStringFailure.*|object) of size (.*):.*\])"));
   EXPECT_EQ("LoggerTest.cpp", pathBasename(messages[0].first.getFileName()));
   EXPECT_EQ(LogLevel::WARN, messages[0].first.getLevel());
   EXPECT_FALSE(messages[0].first.containsNewlines());
@@ -255,8 +257,7 @@ TEST_F(LoggerTest, streamingArgs) {
   messages.clear();
 
   // Test with both function-style and streaming arguments
-  FB_LOG(logger_, WARN, "foo=", foo) << " hello, "
-                                     << "world: " << 34;
+  FB_LOG(logger_, WARN, "foo=", foo) << " hello, " << "world: " << 34;
   ASSERT_EQ(1, messages.size());
   EXPECT_EQ("foo=bar hello, world: 34", messages[0].first.getMessage());
   EXPECT_EQ("LoggerTest.cpp", pathBasename(messages[0].first.getFileName()));

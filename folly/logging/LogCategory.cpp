@@ -47,7 +47,8 @@ LogCategory::LogCategory(StringPiece name, LogCategory* parent)
   parent_->firstChild_ = this;
 }
 
-void LogCategory::admitMessage(const LogMessage& message) const {
+void LogCategory::admitMessage(
+    const LogMessage& message, bool skipAbortOnFatal) const {
   processMessageWalker(this, message);
 
   // If this is a fatal message, flush the handlers to make sure the log
@@ -68,7 +69,9 @@ void LogCategory::admitMessage(const LogMessage& message) const {
           "\n");
       folly::writeFull(STDERR_FILENO, msg.data(), msg.size());
     }
-    std::abort();
+    if (!skipAbortOnFatal) {
+      std::abort();
+    }
   }
 }
 
@@ -77,8 +80,9 @@ void LogCategory::admitMessage(const LogMessage& message) const {
   while (true) {
     category->processMessage(message);
     if (category->parent_ &&
-        message.getLevel() >= category->propagateLevelMessagesToParent_.load(
-                                  std::memory_order_relaxed)) {
+        message.getLevel() >=
+            category->propagateLevelMessagesToParent_.load(
+                std::memory_order_relaxed)) {
       category = category->parent_;
     } else {
       break;
@@ -157,9 +161,10 @@ void LogCategory::replaceHandlers(
   return handlers_.wlock()->swap(handlers);
 }
 
-void LogCategory::updateHandlers(const std::unordered_map<
-                                 std::shared_ptr<LogHandler>,
-                                 std::shared_ptr<LogHandler>>& handlerMap) {
+void LogCategory::updateHandlers(
+    const std::unordered_map<
+        std::shared_ptr<LogHandler>,
+        std::shared_ptr<LogHandler>>& handlerMap) {
   auto handlers = handlers_.wlock();
   for (auto& entry : *handlers) {
     auto* ptr = get_ptr(handlerMap, entry);

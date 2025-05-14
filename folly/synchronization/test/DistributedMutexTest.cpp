@@ -268,7 +268,7 @@ void basicNThreads(int numThreads, int iterations = kStressFactor) {
   auto&& function = [&](auto id) {
     return [&, id] {
       for (auto j = 0; j < iterations; ++j) {
-        auto lck = std::unique_lock<std::decay_t<decltype(mutex)>>{mutex};
+        auto lck = std::unique_lock{mutex};
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
         result.push_back(id);
@@ -301,7 +301,7 @@ void lockWithTryAndTimedNThreads(
 
   auto&& lockUnlockFunction = [&]() {
     while (!stop.load()) {
-      auto lck = std::unique_lock<std::decay_t<decltype(mutex)>>{mutex};
+      auto lck = std::unique_lock{mutex};
       EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
       std::this_thread::yield();
       EXPECT_EQ(barrier.fetch_sub(1, std::memory_order_relaxed), 1);
@@ -310,8 +310,7 @@ void lockWithTryAndTimedNThreads(
 
   auto tryLockFunction = [&]() {
     while (!stop.load()) {
-      using Mutex = std::decay_t<decltype(mutex)>;
-      auto lck = std::unique_lock<Mutex>{mutex, std::defer_lock};
+      auto lck = std::unique_lock{mutex, std::defer_lock};
       if (lck.try_lock()) {
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
@@ -322,8 +321,7 @@ void lockWithTryAndTimedNThreads(
 
   auto timedLockFunction = [&]() {
     while (!stop.load()) {
-      using Mutex = std::decay_t<decltype(mutex)>;
-      auto lck = std::unique_lock<Mutex>{mutex, std::defer_lock};
+      auto lck = std::unique_lock{mutex, std::defer_lock};
       if (lck.try_lock_for(kForever)) {
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
@@ -403,7 +401,7 @@ void combineWithLockNThreads(int numThreads, std::chrono::seconds duration) {
 
   auto&& lockUnlockFunction = [&]() {
     while (!stop.load()) {
-      auto lck = std::unique_lock<std::decay_t<decltype(mutex)>>{mutex};
+      auto lck = std::unique_lock{mutex};
       EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
       std::this_thread::yield();
       EXPECT_EQ(barrier.fetch_sub(1, std::memory_order_relaxed), 1);
@@ -458,7 +456,7 @@ void combineWithTryLockNThreads(int numThreads, std::chrono::seconds duration) {
 
   auto&& lockUnlockFunction = [&]() {
     while (!stop.load()) {
-      auto lck = std::unique_lock<std::decay_t<decltype(mutex)>>{mutex};
+      auto lck = std::unique_lock{mutex};
       EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
       std::this_thread::yield();
       EXPECT_EQ(barrier.fetch_sub(1, std::memory_order_relaxed), 1);
@@ -491,8 +489,7 @@ void combineWithTryLockNThreads(int numThreads, std::chrono::seconds duration) {
 
   auto tryLockFunction = [&]() {
     while (!stop.load()) {
-      using Mutex = std::decay_t<decltype(mutex)>;
-      auto lck = std::unique_lock<Mutex>{mutex, std::defer_lock};
+      auto lck = std::unique_lock{mutex, std::defer_lock};
       if (lck.try_lock()) {
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
@@ -529,7 +526,7 @@ void combineWithLockTryAndTimedNThreads(
 
   auto&& lockUnlockFunction = [&]() {
     while (!stop.load()) {
-      auto lck = std::unique_lock<std::decay_t<decltype(mutex)>>{mutex};
+      auto lck = std::unique_lock{mutex};
       EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
       std::this_thread::yield();
       EXPECT_EQ(barrier.fetch_sub(1, std::memory_order_relaxed), 1);
@@ -577,7 +574,7 @@ void combineWithLockTryAndTimedNThreads(
   auto tryLockFunction = [&]() {
     while (!stop.load()) {
       using Mutex = std::decay_t<decltype(mutex)>;
-      auto lck = std::unique_lock<Mutex>{mutex, std::defer_lock};
+      auto lck = std::unique_lock{mutex, std::defer_lock};
       if (lck.try_lock()) {
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
@@ -589,7 +586,7 @@ void combineWithLockTryAndTimedNThreads(
   auto timedLockFunction = [&]() {
     while (!stop.load()) {
       using Mutex = std::decay_t<decltype(mutex)>;
-      auto lck = std::unique_lock<Mutex>{mutex, std::defer_lock};
+      auto lck = std::unique_lock{mutex, std::defer_lock};
       if (lck.try_lock_for(kForever)) {
         EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
         std::this_thread::yield();
@@ -1983,7 +1980,7 @@ void concurrentBigValueReturnStress(
     threads.push_back(DSched::thread([&]() {
       auto&& value = std::atomic<std::uint64_t>{0};
 
-      for (auto j = 0; !stop.load(); ++j) {
+      while (!stop.load()) {
         auto returned = mutex.lock_combine([&]() {
           EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 0);
           EXPECT_EQ(barrier.fetch_add(1, std::memory_order_relaxed), 1);
@@ -1998,8 +1995,9 @@ void concurrentBigValueReturnStress(
         });
 
         auto expected = value.load() - 1;
-        folly::for_each(
-            returned, [&](auto& element) { EXPECT_EQ(element, expected++); });
+        folly::for_each(returned, [&](auto& element) {
+          EXPECT_EQ(element, expected++);
+        });
       }
     }));
   }

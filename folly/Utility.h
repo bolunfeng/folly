@@ -58,7 +58,7 @@ template <typename T>
 T* decay_1_(T*);
 
 template <typename T>
-auto decay_0_(int) -> decltype(detail::decay_1_(FOLLY_DECLVAL(T &&)));
+auto decay_0_(int) -> decltype(detail::decay_1_(FOLLY_DECLVAL(T&&)));
 template <typename T>
 auto decay_0_(short) -> void;
 
@@ -121,7 +121,7 @@ constexpr detail::decay_t<T> copy(T&& value) noexcept(
   return static_cast<T&&>(value);
 }
 
-//  mimic: forward_like, p0847r0
+//  mimic: `std::forward_like`, C++23 / p2445r0.
 template <typename Src, typename Dst>
 constexpr like_t<Src, Dst>&& forward_like(Dst&& dst) noexcept {
   return std::forward<like_t<Src, Dst>>(static_cast<Dst&&>(dst));
@@ -253,6 +253,65 @@ struct identity_fn {
 using Identity = identity_fn;
 inline constexpr identity_fn identity{};
 
+/// literal_string
+///
+/// A structural type representing a literal string. A structural type may be
+/// a non-type template argument.
+///
+/// May at times be useful since language-level literal strings are not allowed
+/// as non-type template arguments.
+///
+/// This may typically be used with vtag for passing the literal string as a
+/// constant-expression via a non-type template argument.
+///
+/// Example:
+///
+///   template <size_t N, literal_string<char, N> Str>
+///   void do_something_with_literal_string(vtag_t<Str>);
+///
+///   void do_something() {
+///     do_something_with_literal_string(vtag<literal_string{"foobar"}>);
+///   }
+template <typename C, std::size_t N>
+struct literal_string {
+  C buffer[N] = {};
+
+  FOLLY_CONSTEVAL /* implicit */ literal_string(C const (&buf)[N]) noexcept {
+    for (std::size_t i = 0; i < N; ++i) {
+      buffer[i] = buf[i];
+    }
+  }
+
+  constexpr std::size_t size() const noexcept { return N - 1; }
+  constexpr C const* data() const noexcept { return buffer; }
+  constexpr C const* c_str() const noexcept { return buffer; }
+
+  template <
+      typename String,
+      decltype((void(String(FOLLY_DECLVAL(C const*), N - 1)), 0)) = 0>
+  constexpr explicit operator String() const //
+      noexcept(noexcept(String(FOLLY_DECLVAL(C const*), N - 1))) {
+    return String(data(), N - 1);
+  }
+};
+
+inline namespace literals {
+inline namespace string_literals {
+
+#if FOLLY_CPLUSPLUS >= 202002 && !defined(__NVCC__)
+template <literal_string Str>
+FOLLY_CONSTEVAL decltype(Str) operator""_lit() noexcept {
+  return Str;
+}
+template <literal_string Str>
+FOLLY_CONSTEVAL vtag_t<Str> operator""_litv() noexcept {
+  return vtag<Str>;
+}
+#endif
+
+} // namespace string_literals
+} // namespace literals
+
 namespace detail {
 
 template <typename T>
@@ -277,8 +336,8 @@ struct inheritable_contain_ {
       : v(static_cast<A&&>(a)...) {}
   FOLLY_ERASE operator T&() & noexcept { return v; }
   FOLLY_ERASE operator T&&() && noexcept { return static_cast<T&&>(v); }
-  FOLLY_ERASE operator T const &() const& noexcept { return v; }
-  FOLLY_ERASE operator T const &&() const&& noexcept {
+  FOLLY_ERASE operator T const&() const& noexcept { return v; }
+  FOLLY_ERASE operator T const&&() const&& noexcept {
     return static_cast<T const&&>(v);
   }
 };
@@ -432,12 +491,13 @@ struct unsafe_default_initialized_cv {
   FOLLY_ERASE constexpr /* implicit */ operator T() const noexcept {
 #if defined(__cpp_lib_is_constant_evaluated)
 #if __cpp_lib_is_constant_evaluated >= 201811L
-#if !defined(__MSVC_RUNTIME_CHECKS)
+#if (defined(_MSC_VER) && !defined(__MSVC_RUNTIME_CHECKS)) || \
+    (defined(__clang__) && !defined(__GNUC__))
     if (!std::is_constant_evaluated()) {
       T uninit;
       return uninit;
     }
-#endif // !defined(__MSVC_RUNTIME_CHECKS)
+#endif
 #endif
 #endif
     return T();
@@ -445,6 +505,27 @@ struct unsafe_default_initialized_cv {
   FOLLY_POP_WARNING
 };
 inline constexpr unsafe_default_initialized_cv unsafe_default_initialized{};
+
+/// to_bool
+/// to_bool_fn
+///
+/// Constructs a boolean from the argument.
+///
+/// Particularly useful for testing sometimes-weak function declarations. They
+/// may be declared weak on some platforms but not on others. GCC likes to warn
+/// about them but the warning is unhelpful.
+struct to_bool_fn {
+  template <typename..., typename T>
+  FOLLY_ERASE constexpr auto operator()(T const& t) const noexcept
+      -> decltype(static_cast<bool>(t)) {
+    FOLLY_PUSH_WARNING
+    FOLLY_GCC_DISABLE_WARNING("-Waddress")
+    FOLLY_GCC_DISABLE_WARNING("-Wnonnull-compare")
+    return static_cast<bool>(t);
+    FOLLY_POP_WARNING
+  }
+};
+inline constexpr to_bool_fn to_bool{};
 
 struct to_signed_fn {
   template <typename..., typename T>
@@ -763,4 +844,89 @@ struct invocable_to_fn {
   }
 };
 inline constexpr invocable_to_fn invocable_to{};
+
+#define FOLLY_DETAIL_FORWARD_BODY(...)                     \
+  noexcept(noexcept(__VA_ARGS__))->decltype(__VA_ARGS__) { \
+    return __VA_ARGS__;                                    \
+  }
+
+/// FOLLY_FOR_EACH_THIS_OVERLOAD_IN_CLASS_BODY_DELEGATE
+///
+/// Helper macro to add 4 delegated, qualifier-overloaded methods to a class
+///
+/// Example:
+///
+///     template <typename T>
+///     class optional {
+///      public:
+///       bool has_value() const;
+///
+///       T& value() & {
+///         if (!has_value()) { throw std::bad_optional_access(); }
+///         return m_value;
+///       }
+///
+///       const T& value() const& {
+///         if (!has_value()) { throw std::bad_optional_access(); }
+///         return m_value;
+///       }
+///
+///       T&& value() && {
+///         if (!has_value()) { throw std::bad_optional_access(); }
+///         return std::move(m_value);
+///       }
+///
+///       const T&& value() const&& {
+///         if (!has_value()) { throw std::bad_optional_access(); }
+///         return std::move(m_value);
+///       }
+///     };
+///
+/// This is equivalent to
+///
+///     template <typename T>
+///     class optional {
+///       template <typename Self>
+///       decltype(auto) value_impl(Self&& self) {
+///         if (!self.has_value()) {
+///           throw std::bad_optional_access();
+///         }
+///         return std::forward<Self>(self).m_value;
+///       }
+///       // ...
+///
+///      public:
+///       bool has_value() const;
+///
+///       FOLLY_FOR_EACH_THIS_OVERLOAD_IN_CLASS_BODY_DELEGATE(value,
+///       value_impl);
+///     };
+///
+/// Note: This can be migrated to C++23's deducing this:
+/// https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0847r7.html
+///
+// clang-format off
+#define FOLLY_FOR_EACH_THIS_OVERLOAD_IN_CLASS_BODY_DELEGATE(MEMBER, DELEGATE) \
+  template <class... Args>                                                    \
+  [[maybe_unused]] FOLLY_ERASE_HACK_GCC                                       \
+  constexpr auto MEMBER(Args&&... args) & FOLLY_DETAIL_FORWARD_BODY(          \
+      ::folly::remove_cvref_t<decltype(*this)>::DELEGATE(                     \
+          *this, static_cast<Args&&>(args)...))                               \
+  template <class... Args>                                                    \
+  [[maybe_unused]] FOLLY_ERASE_HACK_GCC                                       \
+  constexpr auto MEMBER(Args&&... args) const& FOLLY_DETAIL_FORWARD_BODY(     \
+      ::folly::remove_cvref_t<decltype(*this)>::DELEGATE(                     \
+          *this, static_cast<Args&&>(args)...))                               \
+  template <class... Args>                                                    \
+  [[maybe_unused]] FOLLY_ERASE_HACK_GCC                                       \
+  constexpr auto MEMBER(Args&&... args) && FOLLY_DETAIL_FORWARD_BODY(         \
+      ::folly::remove_cvref_t<decltype(*this)>::DELEGATE(                     \
+          std::move(*this), static_cast<Args&&>(args)...))                    \
+  template <class... Args>                                                    \
+  [[maybe_unused]] FOLLY_ERASE_HACK_GCC                                       \
+  constexpr auto MEMBER(Args&&... args) const&& FOLLY_DETAIL_FORWARD_BODY(    \
+      ::folly::remove_cvref_t<decltype(*this)>::DELEGATE(                     \
+          std::move(*this), static_cast<Args&&>(args)...))                    \
+  /* enforce semicolon after macro */ static_assert(true)
+// clang-format on
 } // namespace folly

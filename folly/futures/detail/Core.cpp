@@ -573,22 +573,23 @@ void CoreBase::doCallback(
 
   // Customise inline behaviour
   // If addCompletingKA is non-null, then we are allowing inline execution
-  auto doAdd = [](Executor::KeepAlive<>&& addCompletingKA,
-                  KeepAliveOrDeferred&& currentExecutor,
-                  auto&& keepAliveFunc) mutable {
-    if (auto deferredExecutorPtr = currentExecutor.getDeferredExecutor()) {
-      deferredExecutorPtr->addFrom(
-          std::move(addCompletingKA), std::move(keepAliveFunc));
-    } else {
-      // If executors match call inline
-      auto currentKeepAlive = std::move(currentExecutor).stealKeepAlive();
-      if (addCompletingKA.get() == currentKeepAlive.get()) {
-        keepAliveFunc(std::move(currentKeepAlive));
-      } else {
-        std::move(currentKeepAlive).add(std::move(keepAliveFunc));
-      }
-    }
-  };
+  auto doAdd =
+      [](Executor::KeepAlive<>&& addCompletingKA,
+         KeepAliveOrDeferred&& currentExecutor,
+         auto&& keepAliveFunc) mutable {
+        if (auto deferredExecutorPtr = currentExecutor.getDeferredExecutor()) {
+          deferredExecutorPtr->addFrom(
+              std::move(addCompletingKA), std::move(keepAliveFunc));
+        } else {
+          // If executors match call inline
+          auto currentKeepAlive = std::move(currentExecutor).stealKeepAlive();
+          if (addCompletingKA.get() == currentKeepAlive.get()) {
+            keepAliveFunc(std::move(currentKeepAlive));
+          } else {
+            std::move(currentKeepAlive).add(std::move(keepAliveFunc));
+          }
+        }
+      };
 
   if (executor) {
     // If we are not allowing inline, clear the completing KA to disallow
@@ -621,7 +622,7 @@ void CoreBase::doCallback(
             core->callback_(*core, std::move(ka), nullptr);
           });
     } catch (...) {
-      ew = exception_wrapper(std::current_exception());
+      ew = exception_wrapper(current_exception());
     }
     if (ew) {
       RequestContextScopeGuard rctx(std::move(context_));

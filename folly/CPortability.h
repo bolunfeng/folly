@@ -59,20 +59,27 @@
 #define FOLLY_HAS_FEATURE(...) 0
 #endif
 
+#if defined(__has_warning)
+#define FOLLY_HAS_WARNING(...) __has_warning(__VA_ARGS__)
+#else
+#define FOLLY_HAS_WARNING(...) 0
+#endif
+
 /* FOLLY_SANITIZE_ADDRESS is defined to 1 if the current compilation unit
- * is being compiled with ASAN enabled.
+ * is being compiled with ASAN or HWASAN enabled.
  *
  * Beware when using this macro in a header file: this macro may change values
- * across compilation units if some libraries are built with ASAN enabled
- * and some built with ASAN disabled.  For instance, this may occur, if folly
- * itself was compiled without ASAN but a downstream project that uses folly is
- * compiling with ASAN enabled.
+ * across compilation units if some libraries are built with ASAN/HWASAN enabled
+ * and some built with ASAN/HWSAN disabled. For instance, this may occur, if
+ * folly itself was compiled without ASAN/HWSAN but a downstream project that
+ * uses folly is compiling with ASAN/HWSAN enabled.
  *
  * Use FOLLY_LIBRARY_SANITIZE_ADDRESS (defined in folly-config.h) to check if
  * folly itself was compiled with ASAN enabled.
  */
 #ifndef FOLLY_SANITIZE_ADDRESS
-#if FOLLY_HAS_FEATURE(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#if FOLLY_HAS_FEATURE(address_sanitizer) || defined(__SANITIZE_ADDRESS__) || \
+    FOLLY_HAS_FEATURE(hwaddress_sanitizer)
 #define FOLLY_SANITIZE_ADDRESS 1
 #endif
 #endif
@@ -83,8 +90,9 @@
 #ifdef FOLLY_SANITIZE_ADDRESS
 #if defined(__clang__)
 #if __has_attribute(__no_sanitize__)
-#define FOLLY_DISABLE_ADDRESS_SANITIZER \
-  __attribute__((__no_sanitize__("address"), __noinline__))
+#define FOLLY_DISABLE_ADDRESS_SANITIZER                     \
+  __attribute__((__no_sanitize__("address"), __noinline__)) \
+  __attribute__((__no_sanitize__("hwaddress"), __noinline__))
 #elif __has_attribute(__no_address_safety_analysis__)
 #define FOLLY_DISABLE_ADDRESS_SANITIZER \
   __attribute__((__no_address_safety_analysis__, __noinline__))
@@ -234,11 +242,32 @@
 #define FOLLY_ATTR_WEAK
 #endif
 
+#if defined(__has_attribute)
+#if __has_attribute(weak)
+#define FOLLY_ATTR_WEAK_SYMBOLS_COMPILE_TIME __attribute__((__weak__))
+#else
+#define FOLLY_ATTR_WEAK_SYMBOLS_COMPILE_TIME
+#endif
+#else
+#define FOLLY_ATTR_WEAK_SYMBOLS_COMPILE_TIME
+#endif
+
 // Microsoft ABI version (can be overridden manually if necessary)
 #ifndef FOLLY_MICROSOFT_ABI_VER
 #ifdef _MSC_VER
 #define FOLLY_MICROSOFT_ABI_VER _MSC_VER
 #endif
+#endif
+
+// FOLLY_NAME_RESOLVABLE
+//
+// An attribute that marks a function or variable as needing to be resolvable
+// by name. This generally is needed if inline assembly refers to the variable
+// by string name.
+#ifdef __roar__
+#define FOLLY_NAME_RESOLVABLE __attribute__((roar_resolvable_by_name))
+#else
+#define FOLLY_NAME_RESOLVABLE
 #endif
 
 //  FOLLY_ERASE
@@ -249,6 +278,12 @@
 //
 //  Semantically includes the inline specifier.
 #define FOLLY_ERASE FOLLY_ALWAYS_INLINE FOLLY_ATTR_VISIBILITY_HIDDEN
+
+//  FOLLY_ERASE_NOINLINE
+//
+//  Like FOLLY_ERASE, but also noinline. The naming similarity with FOLLY_ERASE
+//  is specifically desirable.
+#define FOLLY_ERASE_NOINLINE FOLLY_NOINLINE FOLLY_ATTR_VISIBILITY_HIDDEN
 
 //  FOLLY_ERASE_HACK_GCC
 //
@@ -286,6 +321,9 @@
 #define FOLLY_GNU_DISABLE_WARNING(warningName) \
   _Pragma(                                     \
       FOLLY_GNU_DISABLE_WARNING_INTERNAL2(GCC diagnostic ignored warningName))
+#define FOLLY_GNU_ENABLE_WARNING(warningName) \
+  _Pragma(                                    \
+      FOLLY_GNU_DISABLE_WARNING_INTERNAL2(GCC diagnostic warning warningName))
 #ifdef __clang__
 #define FOLLY_CLANG_DISABLE_WARNING(warningName) \
   FOLLY_GNU_DISABLE_WARNING(warningName)

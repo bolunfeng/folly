@@ -19,14 +19,11 @@
 #include <sys/types.h>
 
 #include <cerrno>
-#include <climits>
 #include <sstream>
-#include <thread>
 
 #include <boost/preprocessor/control/if.hpp>
 
 #include <folly/Exception.h>
-#include <folly/ExceptionWrapper.h>
 #include <folly/Format.h>
 #include <folly/Portability.h>
 #include <folly/SocketAddress.h>
@@ -83,7 +80,7 @@ class ZeroCopyMMapMemStoreReal : public ZeroCopyMemStore {
     if (fd >= 0) {
       void* addr =
           ::mmap(nullptr, entries * size, PROT_READ, MAP_SHARED, fd, 0);
-      ::close(fd);
+      folly::fileops::close(fd);
       if (addr != MAP_FAILED) {
         addr_ = addr;
         numEntries_ = entries;
@@ -107,7 +104,7 @@ class ZeroCopyMMapMemStoreReal : public ZeroCopyMemStore {
   }
 
   ZeroCopyMemStore::EntryPtr get() override {
-    std::unique_lock<std::mutex> lk(availMutex_);
+    std::unique_lock lk(availMutex_);
     if (!avail_.empty()) {
       auto* entry = avail_.front();
       avail_.pop_front();
@@ -131,7 +128,7 @@ class ZeroCopyMMapMemStoreReal : public ZeroCopyMemStore {
         DCHECK(!ret);
       }
 
-      std::unique_lock<std::mutex> lk(availMutex_);
+      std::unique_lock lk(availMutex_);
       avail_.push_back(entry);
     }
   }
@@ -794,9 +791,8 @@ void AsyncSocket::init() {
 }
 
 AsyncSocket::~AsyncSocket() {
-  VLOG(7) << "actual destruction of AsyncSocket(this=" << this
-          << ", evb=" << eventBase_ << ", fd=" << fd_ << ", state=" << state_
-          << ")";
+  VLOG(7) << "actual destruction of AsyncSocket(this=" << this << ", evb="
+          << eventBase_ << ", fd=" << fd_ << ", state=" << state_ << ")";
   for (const auto& cb : lifecycleObservers_) {
     cb->destroy(this);
   }
@@ -825,8 +821,9 @@ NetworkSocket AsyncSocket::detachNetworkSocket() {
 
   // folly::ObserverContainer observer support
   if (auto list = getAsyncSocketObserverContainer()) {
-    list->invokeInterfaceMethodAllObservers(
-        [](auto observer, auto observed) { observer->fdDetach(observed); });
+    list->invokeInterfaceMethodAllObservers([](auto observer, auto observed) {
+      observer->fdDetach(observed);
+    });
   }
 
   // Extract the fd, and set fd_ to -1 first, so closeNow() won't
@@ -985,14 +982,39 @@ void AsyncSocket::connect(
     // bind the socket
     if (bindAddr != anyAddress()) {
       int one = 1;
-      if (netops_->setsockopt(
-              fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one))) {
-        auto errnoCopy = errno;
-        doClose();
-        throw AsyncSocketException(
-            AsyncSocketException::NOT_OPEN,
-            "failed to setsockopt prior to bind on " + bindAddr.describe(),
-            errnoCopy);
+#if defined(IP_BIND_ADDRESS_NO_PORT) && !FOLLY_MOBILE && !defined(_WIN32) && \
+    !defined(__APPLE__)
+      // If the any port is specified with a non-any address this is typically
+      // a client socket. However, calling bind before connect without
+      // IP_BIND_ADDRESS_NO_PORT forces the OS to find a unique port relying
+      // on only the local tuple. This limits the range of available ephemeral
+      // ports.  Using the IP_BIND_ADDRESS_NO_PORT delays assigning a port until
+      // connect expanding the available port range.
+      if (bindAddr.getPort() == 0) {
+        if (netops_->setsockopt(
+                fd_, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &one, sizeof(one))) {
+          auto errnoCopy = errno;
+          doClose();
+          throw AsyncSocketException(
+              AsyncSocketException::NOT_OPEN,
+              "failed to setsockopt IP_BIND_ADDRESS_NO_PORT prior to bind on " +
+                  bindAddr.describe(),
+              errnoCopy);
+        }
+      } else {
+#else
+      {
+#endif
+        if (netops_->setsockopt(
+                fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one))) {
+          auto errnoCopy = errno;
+          doClose();
+          throw AsyncSocketException(
+              AsyncSocketException::NOT_OPEN,
+              "failed to setsockopt SO_REUSEADDR prior to bind on " +
+                  bindAddr.describe(),
+              errnoCopy);
+        }
       }
 
       bindAddr.getAddress(&addrStorage);
@@ -1216,9 +1238,8 @@ AsyncSocket::ErrMessageCallback* AsyncSocket::getErrMessageCallback() const {
 }
 
 void AsyncSocket::setReadAncillaryDataCB(ReadAncillaryDataCallback* callback) {
-  VLOG(6) << "AsyncSocket::setReadAncillaryDataCB() this=" << this
-          << ", fd=" << fd_ << ", callback=" << callback
-          << ", state=" << state_;
+  VLOG(6) << "AsyncSocket::setReadAncillaryDataCB() this=" << this << ", fd="
+          << fd_ << ", callback=" << callback << ", state=" << state_;
 
   readAncillaryDataCallback_ = callback;
 }
@@ -1387,6 +1408,10 @@ void AsyncSocket::setZeroCopyReenableThreshold(size_t threshold) {
   zeroCopyReenableThreshold_ = threshold;
 }
 
+void AsyncSocket::setZeroCopyDrainConfig(const ZeroCopyDrainConfig& config) {
+  zeroCopyDrainConfig_ = config;
+}
+
 bool AsyncSocket::isZeroCopyRequest(WriteFlags flags) {
   return (zeroCopyEnabled_ && isSet(flags, WriteFlags::WRITE_MSG_ZEROCOPY));
 }
@@ -1438,6 +1463,50 @@ void AsyncSocket::releaseZeroCopyBuf(uint32_t id) {
   }
 
   idZeroCopyBufPtrMap_.erase(iter);
+}
+
+void AsyncSocket::drainZeroCopyQueue() {
+  // try to drain ZC writes if any - this is best effort
+  size_t prevSize = 0;
+  while (idZeroCopyBufPtrMap_.size() != prevSize) {
+    prevSize = idZeroCopyBufPtrMap_.size();
+    handleErrMessages();
+  }
+
+  if (idZeroCopyBufPtrMap_.empty()) {
+    return;
+  }
+
+  // Enable SO_LINGER if requested.
+  if (zeroCopyDrainConfig_.linger.has_value()) {
+    struct linger optLinger = {1, zeroCopyDrainConfig_.linger.value()};
+    if (setSockOpt(SOL_SOCKET, SO_LINGER, &optLinger) != 0) {
+      VLOG(2) << "AsyncSocket::drainZeroCopyQueue(): error setting SO_LINGER "
+              << "on " << fd_ << ": errno=" << errno;
+    }
+  }
+
+  if (eventBase_) {
+    idZeroCopyBufPtrMap_.clear();
+    // copy the buffers and adjust the allocatedBytesBuffered_
+    std::vector<std::unique_ptr<folly::IOBuf>> bufs;
+    for (auto& info : std::exchange(idZeroCopyBufInfoMap_, {})) {
+      if (info.second.buf_) {
+        const size_t allocated = info.second.buf_->computeChainCapacity();
+        DCHECK_GE(allocatedBytesBuffered_, allocated);
+        allocatedBytesBuffered_ -= allocated;
+        bufs.emplace_back(std::move(info.second.buf_));
+      }
+    }
+    // enqueue for later destruction
+    eventBase_->scheduleAt(
+        [b = std::move(bufs)] {},
+        std::chrono::steady_clock::now() + zeroCopyDrainConfig_.drainDelay);
+  } else {
+    while (!idZeroCopyBufPtrMap_.empty()) {
+      releaseZeroCopyBuf(idZeroCopyBufPtrMap_.begin()->first);
+    }
+  }
 }
 
 void AsyncSocket::setZeroCopyBuf(
@@ -1774,7 +1843,9 @@ void AsyncSocket::writeImpl(
   auto* releaseIOBufCallback =
       callback ? callback->getReleaseIOBufCallback() : nullptr;
 
-  SCOPE_EXIT { releaseIOBuf(std::move(ioBuf), releaseIOBufCallback); };
+  SCOPE_EXIT {
+    releaseIOBuf(std::move(ioBuf), releaseIOBufCallback);
+  };
 
   totalAppBytesScheduledForWrite_ += totalBytes;
   if (ioBuf) {
@@ -2155,10 +2226,10 @@ void AsyncSocket::shutdownWriteNow() {
     case StateEnum::ERROR:
       // We should never get here.  SHUT_WRITE should always be set
       // in STATE_CLOSED and STATE_ERROR.
-      VLOG(4) << "AsyncSocket::shutdownWriteNow() (this=" << this
-              << ", fd=" << fd_ << ") in unexpected state " << state_
-              << " with SHUT_WRITE not set (" << std::hex << (int)shutdownFlags_
-              << ")";
+      VLOG(4)
+          << "AsyncSocket::shutdownWriteNow() (this=" << this << ", fd=" << fd_
+          << ") in unexpected state " << state_ << " with SHUT_WRITE not set ("
+          << std::hex << (int)shutdownFlags_ << ")";
       assert(false);
       return;
   }
@@ -2229,10 +2300,10 @@ bool AsyncSocket::error() const {
 }
 
 void AsyncSocket::attachEventBase(EventBase* eventBase) {
-  VLOG(5) << "AsyncSocket::attachEventBase(this=" << this << ", fd=" << fd_
-          << ", old evb=" << eventBase_ << ", new evb=" << eventBase
-          << ", state=" << state_ << ", events=" << std::hex << eventFlags_
-          << ")";
+  VLOG(5)
+      << "AsyncSocket::attachEventBase(this=" << this << ", fd=" << fd_
+      << ", old evb=" << eventBase_ << ", new evb=" << eventBase
+      << ", state=" << state_ << ", events=" << std::hex << eventFlags_ << ")";
   assert(eventBase_ == nullptr);
   eventBase->dcheckIsInEventBaseThread();
 
@@ -2482,9 +2553,9 @@ size_t AsyncSocket::getSendBufInUse() const {
   if (-1 == ::ioctl(fd_.toFd(), SIOCOUTQ, &returnValue)) {
     int errnoCopy = errno;
     std::stringstream issueString;
-    issueString << "Failed to get the tx used bytes on Socket: " << this
-                << "(fd=" << fd_ << ", state=" << state_
-                << "): " << errnoStr(errnoCopy);
+    issueString
+        << "Failed to get the tx used bytes on Socket: " << this << "(fd="
+        << fd_ << ", state=" << state_ << "): " << errnoStr(errnoCopy);
     VLOG(2) << issueString.str();
     throw std::logic_error(issueString.str());
   }
@@ -2505,9 +2576,9 @@ size_t AsyncSocket::getRecvBufInUse() const {
   if (-1 == ::ioctl(fd_.toFd(), SIOCINQ, &returnValue)) {
     std::stringstream issueString;
     int errnoCopy = errno;
-    issueString << "Failed to get the rx used bytes on Socket: " << this
-                << "(fd=" << fd_ << ", state=" << state_
-                << "): " << errnoStr(errnoCopy);
+    issueString
+        << "Failed to get the rx used bytes on Socket: " << this << "(fd="
+        << fd_ << ", state=" << state_ << "): " << errnoStr(errnoCopy);
     VLOG(2) << issueString.str();
     throw std::logic_error(issueString.str());
   }
@@ -2621,7 +2692,7 @@ AsyncSocket::ReadResult AsyncSocket::performReadMsg(
     struct ::msghdr& msg,
     // This is here only to preserve AsyncSSLSocket's legacy semi-broken
     // behavior (D43648653 for context).
-    AsyncReader::ReadCallback::ReadMode) {
+    AsyncReader::ReadCallback::ReadMode readMode) {
   VLOG(5) << "AsyncSocket::performReadMsg() this=" << this
           << ", iovs=" << msg.msg_iov << ", num=" << msg.msg_iovlen;
 
@@ -2655,7 +2726,32 @@ AsyncSocket::ReadResult AsyncSocket::performReadMsg(
   }
 
   ssize_t bytes = 0;
-  if (readAncillaryDataCallback_ == nullptr && msg.msg_iovlen == 1) {
+  if (readMode == AsyncReader::ReadCallback::ReadMode::ReadZC) {
+    DestructorGuard dg(this);
+    // ReadZC is async, where the current code path triggered from POLLIN will
+    // issue the request but the completion happens at a later point.
+    // AsyncSocket reads are level triggered so it is possible for another
+    // ReadZC request to be issued before an already issued request has
+    // completed. To fix this, unset the readCB.
+    auto readCallback = readCallback_;
+    setReadCB(nullptr);
+    auto backend = getEventBase()->getBackend();
+    auto readZcCallback = [guard = std::move(dg), readCallback](ssize_t len) {
+      if (len < 0) {
+        AsyncSocketException ex(
+            AsyncSocketException::INTERNAL_ERROR, "ReadZC failed", len);
+        readCallback->readErr(ex);
+      } else {
+        readCallback->readDataAvailable(len);
+      }
+    };
+    backend->queueRecvZc(
+        fd_.toFd(),
+        msg.msg_iov[0].iov_base,
+        msg.msg_iov[0].iov_len,
+        std::move(readZcCallback));
+    return ReadResult(READ_ASYNC);
+  } else if (readAncillaryDataCallback_ == nullptr && msg.msg_iovlen == 1) {
     bytes = netops_->recv(
         fd_, msg.msg_iov[0].iov_base, msg.msg_iov[0].iov_len, MSG_DONTWAIT);
   } else {
@@ -3207,8 +3303,9 @@ AsyncSocket::ReadCode AsyncSocket::processNormalRead() {
     readCallback_->readDataAvailable(size_t(bytesRead));
 
     // Continue reading if we filled the available buffer
-    return (size_t(bytesRead) < buflen) ? ReadCode::READ_DONE
-                                        : ReadCode::READ_CONTINUE;
+    return (size_t(bytesRead) < buflen)
+        ? ReadCode::READ_DONE
+        : ReadCode::READ_CONTINUE;
 
   } else if (bytesRead == READ_BLOCKING) {
     // No more data to read right now.
@@ -3224,6 +3321,8 @@ AsyncSocket::ReadCode AsyncSocket::processNormalRead() {
         withAddr("recv() failed"),
         errnoCopy);
     return failRead(__func__, ex);
+  } else if (bytesRead == READ_ASYNC) {
+    return ReadCode::READ_DONE;
   } else {
     assert(bytesRead == READ_EOF);
     readErr_ = READ_EOF;
@@ -3523,16 +3622,20 @@ void AsyncSocket::handleConnect() noexcept {
         AsyncSocketException::INTERNAL_ERROR,
         withAddr("error calling getsockopt() after connect"),
         errnoCopy);
-    VLOG(4) << "AsyncSocket::handleConnect(this=" << this << ", fd=" << fd_
-            << " host=" << addr_.describe() << ") exception:" << ex.what();
+    if (std::getenv("DISABLE_ASYNC_SOCKET_PRINT") == nullptr) {
+      VLOG(4) << "AsyncSocket::handleConnect(this=" << this << ", fd=" << fd_
+              << " host=" << addr_.describe() << ") exception:" << ex.what();
+    }
     return failConnect(__func__, ex);
   }
 
   if (error != 0) {
     AsyncSocketException ex(
         AsyncSocketException::NOT_OPEN, "connect failed", error);
-    VLOG(2) << "AsyncSocket::handleConnect(this=" << this << ", fd=" << fd_
-            << " host=" << addr_.describe() << ") exception: " << ex.what();
+    if (std::getenv("DISABLE_ASYNC_SOCKET_PRINT") == nullptr) {
+      VLOG(2) << "AsyncSocket::handleConnect(this=" << this << ", fd=" << fd_
+              << " host=" << addr_.describe() << ") exception: " << ex.what();
+    }
     return failConnect(__func__, ex);
   }
 
@@ -3618,8 +3721,9 @@ void AsyncSocket::handleNetworkSocketAttached() {
 
   // folly::ObserverContainer observer support
   if (auto list = getAsyncSocketObserverContainer()) {
-    list->invokeInterfaceMethodAllObservers(
-        [](auto observer, auto observed) { observer->fdAttach(observed); });
+    list->invokeInterfaceMethodAllObservers([](auto observer, auto observed) {
+      observer->fdAttach(observed);
+    });
   }
 
   if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
@@ -3686,71 +3790,73 @@ AsyncSocket::WriteResult AsyncSocket::sendSocketMessage(
 
   // lambda to prepare and send a message, and handle byte events
   // parameters have L at the end to prevent shadowing warning from gcc
-  auto prepSendMsg = [this, writeTag = std::move(writeTag)](
-                         const iovec* vecL,
-                         const size_t countL,
-                         const WriteFlags flagsL) {
-    const bool byteEventsEnabled =
-        (byteEventHelper_ && byteEventHelper_->byteEventsEnabled &&
-         !byteEventHelper_->maybeEx.has_value());
+  auto prepSendMsg =
+      [this, writeTag = std::move(writeTag)](
+          const iovec* vecL, const size_t countL, const WriteFlags flagsL) {
+        const bool byteEventsEnabled =
+            (byteEventHelper_ && byteEventHelper_->byteEventsEnabled &&
+             !byteEventHelper_->maybeEx.has_value());
 
-    struct msghdr msg = {};
-    msg.msg_name = nullptr;
-    msg.msg_namelen = 0;
-    msg.msg_iov = const_cast<struct iovec*>(vecL);
-    msg.msg_iovlen = std::min<size_t>(countL, kIovMax);
-    msg.msg_flags = 0; // passed to sendSocketMessage below, it sets them
-    msg.msg_control = nullptr;
-    msg.msg_controllen = sendMsgParamCallback_->getAncillaryDataSize(
-        flagsL, writeTag, byteEventsEnabled);
-    CHECK_GE(
-        AsyncSocket::SendMsgParamsCallback::maxAncillaryDataSize,
-        msg.msg_controllen);
+        struct msghdr msg = {};
+        msg.msg_name = nullptr;
+        msg.msg_namelen = 0;
+        msg.msg_iov = const_cast<struct iovec*>(vecL);
+        msg.msg_iovlen = std::min<size_t>(countL, kIovMax);
+        msg.msg_flags = 0; // passed to sendSocketMessage below, it sets them
+        msg.msg_control = nullptr;
+        msg.msg_controllen = sendMsgParamCallback_->getAncillaryDataSize(
+            flagsL, writeTag, byteEventsEnabled);
+        CHECK_GE(
+            AsyncSocket::SendMsgParamsCallback::maxAncillaryDataSize,
+            msg.msg_controllen);
 
-    if (msg.msg_controllen != 0) {
-      msg.msg_control = reinterpret_cast<char*>(alloca(msg.msg_controllen));
-      sendMsgParamCallback_->getAncillaryData(
-          flagsL, msg.msg_control, writeTag, byteEventsEnabled);
-    }
-
-    const auto prewriteRawBytesWritten = getRawBytesWritten();
-    int msg_flags = sendMsgParamCallback_->getFlags(flagsL, zeroCopyEnabled_);
-    auto writeResult = sendSocketMessage(fd_, &msg, msg_flags);
-
-    if (writeResult.writeReturn < 0 && zeroCopyEnabled_ && errno == ENOBUFS) {
-      // workaround for running with zerocopy enabled but without a big enough
-      // memlock value - see ulimit -l
-      zeroCopyEnabled_ = false;
-      zeroCopyReenableCounter_ = zeroCopyReenableThreshold_;
-      msg_flags = sendMsgParamCallback_->getFlags(flagsL, zeroCopyEnabled_);
-      writeResult = sendSocketMessage(fd_, &msg, msg_flags);
-    }
-
-    if (writeResult.writeReturn > 0) {
-      if (msg.msg_controllen != 0) {
-        sendMsgParamCallback_->wroteBytes(writeTag);
-      }
-      if (byteEventsEnabled && isSet(flagsL, WriteFlags::TIMESTAMP_WRITE)) {
-        CHECK_GT(getRawBytesWritten(), prewriteRawBytesWritten); // sanity check
-        ByteEvent byteEvent = {};
-        byteEvent.type = ByteEvent::Type::WRITE;
-        byteEvent.offset = getRawBytesWritten() - 1;
-        byteEvent.maybeRawBytesWritten = writeResult.writeReturn;
-        byteEvent.maybeRawBytesTriedToWrite = 0;
-        for (size_t i = 0; i < countL; ++i) {
-          byteEvent.maybeRawBytesTriedToWrite.value() += vecL[i].iov_len;
+        if (msg.msg_controllen != 0) {
+          msg.msg_control = reinterpret_cast<char*>(alloca(msg.msg_controllen));
+          sendMsgParamCallback_->getAncillaryData(
+              flagsL, msg.msg_control, writeTag, byteEventsEnabled);
         }
-        byteEvent.maybeWriteFlags = flagsL;
-        for (const auto& observer : lifecycleObservers_) {
-          if (observer->getConfig().byteEvents) {
-            observer->byteEvent(this, byteEvent);
+
+        const auto prewriteRawBytesWritten = getRawBytesWritten();
+        int msg_flags =
+            sendMsgParamCallback_->getFlags(flagsL, zeroCopyEnabled_);
+        auto writeResult = sendSocketMessage(fd_, &msg, msg_flags);
+
+        if (writeResult.writeReturn < 0 && zeroCopyEnabled_ &&
+            errno == ENOBUFS) {
+          // workaround for running with zerocopy enabled but without a big
+          // enough memlock value - see ulimit -l
+          zeroCopyEnabled_ = false;
+          zeroCopyReenableCounter_ = zeroCopyReenableThreshold_;
+          msg_flags = sendMsgParamCallback_->getFlags(flagsL, zeroCopyEnabled_);
+          writeResult = sendSocketMessage(fd_, &msg, msg_flags);
+        }
+
+        if (writeResult.writeReturn > 0) {
+          if (msg.msg_controllen != 0) {
+            sendMsgParamCallback_->wroteBytes(writeTag);
+          }
+          if (byteEventsEnabled && isSet(flagsL, WriteFlags::TIMESTAMP_WRITE)) {
+            CHECK_GT(
+                getRawBytesWritten(), prewriteRawBytesWritten); // sanity check
+            ByteEvent byteEvent = {};
+            byteEvent.type = ByteEvent::Type::WRITE;
+            byteEvent.offset = getRawBytesWritten() - 1;
+            byteEvent.maybeRawBytesWritten = writeResult.writeReturn;
+            byteEvent.maybeRawBytesTriedToWrite = 0;
+            for (size_t i = 0; i < countL; ++i) {
+              byteEvent.maybeRawBytesTriedToWrite.value() += vecL[i].iov_len;
+            }
+            byteEvent.maybeWriteFlags = flagsL;
+            for (const auto& observer : lifecycleObservers_) {
+              if (observer->getConfig().byteEvents) {
+                observer->byteEvent(this, byteEvent);
+              }
+            }
           }
         }
-      }
-    }
 
-    return writeResult;
-  };
+        return writeResult;
+      };
 
   // get PrewriteRequests (if any), merge flags with write flags
   const auto prewriteRequest = gatherAndMergePrewriteRequests();
@@ -4351,24 +4457,23 @@ void AsyncSocket::doClose() {
 
   // folly::ObserverContainer support
   if (auto list = getAsyncSocketObserverContainer()) {
-    list->invokeInterfaceMethodAllObservers(
-        [](auto observer, auto observed) { observer->close(observed); });
+    list->invokeInterfaceMethodAllObservers([](auto observer, auto observed) {
+      observer->close(observed);
+    });
   }
 
   if (fd_ == NetworkSocket()) {
     return;
   }
+
+  drainZeroCopyQueue();
+
   if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
     shutdownSocketSet->close(fd_);
   } else {
     netops_->close(fd_);
   }
   fd_ = NetworkSocket();
-
-  // we also want to clear the zerocopy maps
-  // if the fd has been closed
-  idZeroCopyBufPtrMap_.clear();
-  idZeroCopyBufInfoMap_.clear();
 }
 
 std::ostream& operator<<(

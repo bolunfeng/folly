@@ -44,6 +44,7 @@ class AsyncReader {
     enum class ReadMode : uint8_t {
       ReadBuffer = 0,
       ReadVec = 1,
+      ReadZC = 2,
     };
 
     virtual ~ReadCallback() = default;
@@ -433,10 +434,11 @@ class AsyncWriter {
  * timeout, since most callers want to give up if the remote end stops
  * responding and no further progress can be made sending the data.
  */
-class AsyncTransport : public DelayedDestruction,
-                       public AsyncSocketBase,
-                       public AsyncReader,
-                       public AsyncWriter {
+class AsyncTransport
+    : public DelayedDestruction,
+      public AsyncSocketBase,
+      public AsyncReader,
+      public AsyncWriter {
  public:
   typedef std::unique_ptr<AsyncTransport, Destructor> UniquePtr;
 
@@ -842,7 +844,7 @@ class AsyncTransport : public DelayedDestruction,
         AsyncTransport::UniquePtr ret =
             const_cast<AsyncTransport*>(last)->tryExchangeWrappedTransport(p);
         ret->setReadCB(nullptr);
-        DCHECK_NOTNULL(dynamic_cast<T*>(ret.get()));
+        DCHECK_NE(dynamic_cast<T*>(ret.get()), nullptr);
         return typename T::UniquePtr(static_cast<T*>(ret.release()));
       }
       last = current;

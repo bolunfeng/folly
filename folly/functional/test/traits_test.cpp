@@ -26,11 +26,10 @@ struct TraitsTest : testing::Test {
   using traits = folly::function_traits<S>;
 
   template <typename S>
-  using result_type_t = typename traits<S>::result_type;
+  using result_t = typename traits<S>::result;
 
   template <typename R, typename S>
-  static constexpr bool is_result_type_v =
-      std::is_same<R, result_type_t<S>>::value;
+  static constexpr bool is_result_v = std::is_same<R, result_t<S>>::value;
 
   template <typename S>
   static constexpr bool is_nothrow_v = traits<S>::is_nothrow;
@@ -68,54 +67,54 @@ TEST_F(TraitsTest, function_traits) {
 
   //  result_type
 
-  EXPECT_TRUE((is_result_type_v<vc, vc()>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile>));
-  EXPECT_TRUE((is_result_type_v<vc, vc()&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() &&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...)>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...)&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) &&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile&&>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc()& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc()&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() volatile&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc() const volatile&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...)& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...)&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) volatile&& noexcept>));
-  EXPECT_TRUE((is_result_type_v<vc, vc(...) const volatile&& noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc()>));
+  EXPECT_TRUE((is_result_v<vc, vc() const>));
+  EXPECT_TRUE((is_result_v<vc, vc() volatile>));
+  EXPECT_TRUE((is_result_v<vc, vc() const volatile>));
+  EXPECT_TRUE((is_result_v<vc, vc()&>));
+  EXPECT_TRUE((is_result_v<vc, vc() const&>));
+  EXPECT_TRUE((is_result_v<vc, vc() volatile&>));
+  EXPECT_TRUE((is_result_v<vc, vc() const volatile&>));
+  EXPECT_TRUE((is_result_v<vc, vc() &&>));
+  EXPECT_TRUE((is_result_v<vc, vc() const&&>));
+  EXPECT_TRUE((is_result_v<vc, vc() volatile&&>));
+  EXPECT_TRUE((is_result_v<vc, vc() const volatile&&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...)>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) volatile>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const volatile>));
+  EXPECT_TRUE((is_result_v<vc, vc(...)&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) volatile&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const volatile&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) &&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const&&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) volatile&&>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const volatile&&>));
+  EXPECT_TRUE((is_result_v<vc, vc() noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() const noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() volatile noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() const volatile noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() const & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() volatile & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc() const volatile & noexcept>));
+  EXPECT_TRUE((is_result_v < vc, vc() && noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc() const&& noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc() volatile && noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc() const volatile&& noexcept >));
+  EXPECT_TRUE((is_result_v<vc, vc(...) noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) volatile noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const volatile noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) volatile & noexcept>));
+  EXPECT_TRUE((is_result_v<vc, vc(...) const volatile & noexcept>));
+  EXPECT_TRUE((is_result_v < vc, vc(...) && noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc(...) const&& noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc(...) volatile && noexcept >));
+  EXPECT_TRUE((is_result_v < vc, vc(...) const volatile&& noexcept >));
 
   //  is_nothrow
 
@@ -147,26 +146,26 @@ TEST_F(TraitsTest, function_traits) {
   EXPECT_TRUE((is_nothrow_v<void() const noexcept>));
   EXPECT_TRUE((is_nothrow_v<void() volatile noexcept>));
   EXPECT_TRUE((is_nothrow_v<void() const volatile noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void()& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() const& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() volatile& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() const volatile& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void()&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() const&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() volatile&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void() const volatile&& noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void() & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void() const & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void() volatile & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void() const volatile & noexcept>));
+  EXPECT_TRUE((is_nothrow_v < void() && noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void() const&& noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void() volatile && noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void() const volatile&& noexcept >));
   EXPECT_TRUE((is_nothrow_v<void(...) noexcept>));
   EXPECT_TRUE((is_nothrow_v<void(...) const noexcept>));
   EXPECT_TRUE((is_nothrow_v<void(...) volatile noexcept>));
   EXPECT_TRUE((is_nothrow_v<void(...) const volatile noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...)& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) const& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) volatile& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) const volatile& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...)&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) const&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) volatile&& noexcept>));
-  EXPECT_TRUE((is_nothrow_v<void(...) const volatile&& noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void(...) & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void(...) const & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void(...) volatile & noexcept>));
+  EXPECT_TRUE((is_nothrow_v<void(...) const volatile & noexcept>));
+  EXPECT_TRUE((is_nothrow_v < void(...) && noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void(...) const&& noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void(...) volatile && noexcept >));
+  EXPECT_TRUE((is_nothrow_v < void(...) const volatile&& noexcept >));
 
   //  variadic
 
@@ -198,26 +197,26 @@ TEST_F(TraitsTest, function_traits) {
   EXPECT_FALSE((is_variadic_v<void() const noexcept>));
   EXPECT_FALSE((is_variadic_v<void() volatile noexcept>));
   EXPECT_FALSE((is_variadic_v<void() const volatile noexcept>));
-  EXPECT_FALSE((is_variadic_v<void()& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() const& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() volatile& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() const volatile& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void()&& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() const&& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() volatile&& noexcept>));
-  EXPECT_FALSE((is_variadic_v<void() const volatile&& noexcept>));
+  EXPECT_FALSE((is_variadic_v<void() & noexcept>));
+  EXPECT_FALSE((is_variadic_v<void() const & noexcept>));
+  EXPECT_FALSE((is_variadic_v<void() volatile & noexcept>));
+  EXPECT_FALSE((is_variadic_v<void() const volatile & noexcept>));
+  EXPECT_FALSE((is_variadic_v < void() && noexcept >));
+  EXPECT_FALSE((is_variadic_v < void() const&& noexcept >));
+  EXPECT_FALSE((is_variadic_v < void() volatile && noexcept >));
+  EXPECT_FALSE((is_variadic_v < void() const volatile&& noexcept >));
   EXPECT_TRUE((is_variadic_v<void(...) noexcept>));
   EXPECT_TRUE((is_variadic_v<void(...) const noexcept>));
   EXPECT_TRUE((is_variadic_v<void(...) volatile noexcept>));
   EXPECT_TRUE((is_variadic_v<void(...) const volatile noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...)& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) const& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) volatile& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) const volatile& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...)&& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) const&& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) volatile&& noexcept>));
-  EXPECT_TRUE((is_variadic_v<void(...) const volatile&& noexcept>));
+  EXPECT_TRUE((is_variadic_v<void(...) & noexcept>));
+  EXPECT_TRUE((is_variadic_v<void(...) const & noexcept>));
+  EXPECT_TRUE((is_variadic_v<void(...) volatile & noexcept>));
+  EXPECT_TRUE((is_variadic_v<void(...) const volatile & noexcept>));
+  EXPECT_TRUE((is_variadic_v < void(...) && noexcept >));
+  EXPECT_TRUE((is_variadic_v < void(...) const&& noexcept >));
+  EXPECT_TRUE((is_variadic_v < void(...) volatile && noexcept >));
+  EXPECT_TRUE((is_variadic_v < void(...) const volatile&& noexcept >));
 
   //  argument
 
@@ -249,30 +248,36 @@ TEST_F(TraitsTest, function_traits) {
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const noexcept>));
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) volatile noexcept>));
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const volatile noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*)& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) volatile& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const volatile& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*)&& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const&& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) volatile&& noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) & noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) const & noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*) volatile & noexcept>));
+  EXPECT_TRUE(
+      (is_arg_type_v<vc*, 1, void(int, vc*) const volatile & noexcept>));
+  EXPECT_TRUE((is_arg_type_v < vc*, 1, void(int, vc*) && noexcept >));
+  EXPECT_TRUE((is_arg_type_v < vc*, 1, void(int, vc*) const&& noexcept >));
+  EXPECT_TRUE((is_arg_type_v < vc*, 1, void(int, vc*) volatile && noexcept >));
   EXPECT_TRUE(( //
-      is_arg_type_v<vc*, 1, void(int, vc*) const volatile&& noexcept>));
+      is_arg_type_v < vc*,
+      1,
+      void(int, vc*) const volatile&& noexcept >));
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) noexcept>));
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) const noexcept>));
   EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) volatile noexcept>));
   EXPECT_TRUE(( //
       is_arg_type_v<vc*, 1, void(int, vc*, ...) const volatile noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...)& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) const& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) volatile& noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) & noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) const & noexcept>));
+  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) volatile & noexcept>));
   EXPECT_TRUE(( //
-      is_arg_type_v<vc*, 1, void(int, vc*, ...) const volatile& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...)&& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) const&& noexcept>));
-  EXPECT_TRUE((is_arg_type_v<vc*, 1, void(int, vc*, ...) volatile&& noexcept>));
+      is_arg_type_v<vc*, 1, void(int, vc*, ...) const volatile & noexcept>));
+  EXPECT_TRUE((is_arg_type_v < vc*, 1, void(int, vc*, ...) && noexcept >));
+  EXPECT_TRUE((is_arg_type_v < vc*, 1, void(int, vc*, ...) const&& noexcept >));
+  EXPECT_TRUE(
+      (is_arg_type_v < vc*, 1, void(int, vc*, ...) volatile && noexcept >));
   EXPECT_TRUE(( //
-      is_arg_type_v<vc*, 1, void(int, vc*, ...) const volatile&& noexcept>));
+      is_arg_type_v < vc*,
+      1,
+      void(int, vc*, ...) const volatile&& noexcept >));
 
   //  arguments
 
@@ -304,29 +309,32 @@ TEST_F(TraitsTest, function_traits) {
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const noexcept>));
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float) volatile noexcept>));
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const volatile noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float)& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) volatile& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const volatile& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float)&& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const&& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) volatile&& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const volatile&& noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) & noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const & noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) volatile & noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float) const volatile & noexcept>));
+  EXPECT_EQ(3, (args_size_v < void(int, vc*, float) && noexcept >));
+  EXPECT_EQ(3, (args_size_v < void(int, vc*, float) const&& noexcept >));
+  EXPECT_EQ(3, (args_size_v < void(int, vc*, float) volatile && noexcept >));
+  EXPECT_EQ(
+      3, (args_size_v < void(int, vc*, float) const volatile&& noexcept >));
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) noexcept>));
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) const noexcept>));
   EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) volatile noexcept>));
   EXPECT_EQ(
       3, (args_size_v<void(int, vc*, float, ...) const volatile noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...)& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) const& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) volatile& noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) & noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) const & noexcept>));
+  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) volatile & noexcept>));
   EXPECT_EQ(
-      3, (args_size_v<void(int, vc*, float, ...) const volatile& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...)&& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) const&& noexcept>));
-  EXPECT_EQ(3, (args_size_v<void(int, vc*, float, ...) volatile&& noexcept>));
+      3, (args_size_v<void(int, vc*, float, ...) const volatile & noexcept>));
+  EXPECT_EQ(3, (args_size_v < void(int, vc*, float, ...) && noexcept >));
+  EXPECT_EQ(3, (args_size_v < void(int, vc*, float, ...) const&& noexcept >));
   EXPECT_EQ(
-      3, (args_size_v<void(int, vc*, float, ...) const volatile&& noexcept>));
+      3, (args_size_v < void(int, vc*, float, ...) volatile && noexcept >));
+  EXPECT_EQ(
+      3,
+      (args_size_v < void(int, vc*, float, ...) const volatile&& noexcept >));
 
   //  value_like
 
@@ -361,37 +369,39 @@ TEST_F(TraitsTest, function_traits) {
   EXPECT_TRUE((is_cvref_t<int volatile, int, void() volatile noexcept>));
   EXPECT_TRUE(( //
       is_cvref_t<int const volatile, int, void() const volatile noexcept>));
-  EXPECT_TRUE((is_cvref_t<int&, int, void()& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int const&, int, void() const& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int volatile&, int, void() volatile& noexcept>));
+  EXPECT_TRUE((is_cvref_t<int&, int, void() & noexcept>));
+  EXPECT_TRUE((is_cvref_t<int const&, int, void() const & noexcept>));
+  EXPECT_TRUE((is_cvref_t<int volatile&, int, void() volatile & noexcept>));
   EXPECT_TRUE(( //
-      is_cvref_t<int const volatile&, int, void() const volatile& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int&&, int, void()&& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int const&&, int, void() const&& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int volatile&&, int, void() volatile&& noexcept>));
+      is_cvref_t<int const volatile&, int, void() const volatile & noexcept>));
+  EXPECT_TRUE((is_cvref_t < int&&, int, void()&& noexcept >));
+  EXPECT_TRUE((is_cvref_t < int const&&, int, void() const&& noexcept >));
+  EXPECT_TRUE((is_cvref_t < int volatile&&, int, void() volatile&& noexcept >));
   EXPECT_TRUE((
-      is_cvref_t<int const volatile&&, int, void() const volatile&& noexcept>));
+      is_cvref_t < int const volatile&&,
+      int,
+      void() const volatile&& noexcept >));
   EXPECT_TRUE((is_cvref_t<int, int, void(...) noexcept>));
   EXPECT_TRUE((is_cvref_t<int const, int, void(...) const noexcept>));
   EXPECT_TRUE((is_cvref_t<int volatile, int, void(...) volatile noexcept>));
   EXPECT_TRUE(( //
       is_cvref_t<int const volatile, int, void(...) const volatile noexcept>));
-  EXPECT_TRUE((is_cvref_t<int&, int, void(...)& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int const&, int, void(...) const& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int volatile&, int, void(...) volatile& noexcept>));
+  EXPECT_TRUE((is_cvref_t<int&, int, void(...) & noexcept>));
+  EXPECT_TRUE((is_cvref_t<int const&, int, void(...) const & noexcept>));
+  EXPECT_TRUE((is_cvref_t<int volatile&, int, void(...) volatile & noexcept>));
   EXPECT_TRUE(( //
       is_cvref_t<
           int const volatile&,
           int,
-          void(...) const volatile& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int&&, int, void(...)&& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int const&&, int, void(...) const&& noexcept>));
-  EXPECT_TRUE((is_cvref_t<int volatile&&, int, void(...) volatile&& noexcept>));
+          void(...) const volatile & noexcept>));
+  EXPECT_TRUE((is_cvref_t < int&&, int, void(...)&& noexcept >));
+  EXPECT_TRUE((is_cvref_t < int const&&, int, void(...) const&& noexcept >));
+  EXPECT_TRUE(
+      (is_cvref_t < int volatile&&, int, void(...) volatile&& noexcept >));
   EXPECT_TRUE(( //
-      is_cvref_t<
-          int const volatile&&,
-          int,
-          void(...) const volatile&& noexcept>));
+      is_cvref_t < int const volatile&&,
+      int,
+      void(...) const volatile&& noexcept >));
 }
 
 TEST_F(TraitsTest, function_remove_cvref) {
@@ -428,14 +438,14 @@ TEST_F(TraitsTest, function_remove_cvref) {
   EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const noexcept>>));
   EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) volatile noexcept>>));
   EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const volatile noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*)& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) volatile& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const volatile& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*)&& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const&& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) volatile&& noexcept>>));
-  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const volatile&& noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) & noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const & noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) volatile & noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const volatile & noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) && noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const && noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) volatile && noexcept>>));
+  EXPECT_TRUE((same_v<g, rem_cvref_t<char(int*) const volatile && noexcept>>));
 
   using gv = char(int*, ...) noexcept;
   EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) noexcept>>));
@@ -443,16 +453,16 @@ TEST_F(TraitsTest, function_remove_cvref) {
   EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) volatile noexcept>>));
   EXPECT_TRUE(( //
       same_v<gv, rem_cvref_t<char(int*, ...) const volatile noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...)& noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) const& noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) volatile& noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) & noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) const & noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) volatile & noexcept>>));
   EXPECT_TRUE(( //
-      same_v<gv, rem_cvref_t<char(int*, ...) const volatile& noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...)&& noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) const&& noexcept>>));
-  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) volatile&& noexcept>>));
+      same_v<gv, rem_cvref_t<char(int*, ...) const volatile & noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) && noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) const && noexcept>>));
+  EXPECT_TRUE((same_v<gv, rem_cvref_t<char(int*, ...) volatile && noexcept>>));
   EXPECT_TRUE(( //
-      same_v<gv, rem_cvref_t<char(int*, ...) const volatile&& noexcept>>));
+      same_v<gv, rem_cvref_t<char(int*, ...) const volatile && noexcept>>));
 }
 
 TEST_F(TraitsTest, function_like_value) {
@@ -494,19 +504,19 @@ TEST_F(TraitsTest, function_like_value) {
   EXPECT_TRUE((is_like_v<char(int*) volatile noexcept, int volatile, g>));
   EXPECT_TRUE(( //
       is_like_v<char(int*) const volatile noexcept, int const volatile, g>));
-  EXPECT_TRUE((is_like_v<char(int*)& noexcept, int&, g>));
-  EXPECT_TRUE((is_like_v<char(int*) const& noexcept, int const&, g>));
-  EXPECT_TRUE((is_like_v<char(int*) volatile& noexcept, int volatile&, g>));
+  EXPECT_TRUE((is_like_v<char(int*) & noexcept, int&, g>));
+  EXPECT_TRUE((is_like_v<char(int*) const & noexcept, int const&, g>));
+  EXPECT_TRUE((is_like_v<char(int*) volatile & noexcept, int volatile&, g>));
   EXPECT_TRUE(( //
-      is_like_v<char(int*) const volatile& noexcept, int const volatile&, g>));
-  EXPECT_TRUE((is_like_v<char(int*)&& noexcept, int&&, g>));
-  EXPECT_TRUE((is_like_v<char(int*) const&& noexcept, int const&&, g>));
-  EXPECT_TRUE((is_like_v<char(int*) volatile&& noexcept, int volatile&&, g>));
+      is_like_v<char(int*) const volatile & noexcept, int const volatile&, g>));
+  EXPECT_TRUE((is_like_v < char(int*) && noexcept, int&&, g >));
+  EXPECT_TRUE((is_like_v < char(int*) const&& noexcept, int const&&, g >));
+  EXPECT_TRUE(
+      (is_like_v < char(int*) volatile && noexcept, int volatile&&, g >));
   EXPECT_TRUE(( //
-      is_like_v<
-          char(int*) const volatile&& noexcept,
-          int const volatile&&,
-          g>));
+      is_like_v < char(int*) const volatile&& noexcept,
+      int const volatile&&,
+      g >));
 
   using gv = char(int*, ...) noexcept;
   EXPECT_TRUE((is_like_v<char(int*, ...) noexcept, int, gv>));
@@ -517,22 +527,24 @@ TEST_F(TraitsTest, function_like_value) {
           char(int*, ...) const volatile noexcept,
           int const volatile,
           gv>));
-  EXPECT_TRUE((is_like_v<char(int*, ...)& noexcept, int&, gv>));
-  EXPECT_TRUE((is_like_v<char(int*, ...) const& noexcept, int const&, gv>));
+  EXPECT_TRUE((is_like_v<char(int*, ...) & noexcept, int&, gv>));
+  EXPECT_TRUE((is_like_v<char(int*, ...) const & noexcept, int const&, gv>));
   EXPECT_TRUE(( //
-      is_like_v<char(int*, ...) volatile& noexcept, int volatile&, gv>));
+      is_like_v<char(int*, ...) volatile & noexcept, int volatile&, gv>));
   EXPECT_TRUE(( //
       is_like_v<
-          char(int*, ...) const volatile& noexcept,
+          char(int*, ...) const volatile & noexcept,
           int const volatile&,
           gv>));
-  EXPECT_TRUE((is_like_v<char(int*, ...)&& noexcept, int&&, gv>));
-  EXPECT_TRUE((is_like_v<char(int*, ...) const&& noexcept, int const&&, gv>));
+  EXPECT_TRUE((is_like_v < char(int*, ...) && noexcept, int&&, gv >));
+  EXPECT_TRUE(
+      (is_like_v < char(int*, ...) const&& noexcept, int const&&, gv >));
   EXPECT_TRUE(( //
-      is_like_v<char(int*, ...) volatile&& noexcept, int volatile&&, gv>));
+      is_like_v < char(int*, ...) volatile && noexcept,
+      int volatile&&,
+      gv >));
   EXPECT_TRUE(( //
-      is_like_v<
-          char(int*, ...) const volatile&& noexcept,
-          int const volatile&&,
-          gv>));
+      is_like_v < char(int*, ...) const volatile&& noexcept,
+      int const volatile&&,
+      gv >));
 }

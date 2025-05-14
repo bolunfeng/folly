@@ -23,10 +23,10 @@
 #include <folly/File.h>
 #include <folly/String.h>
 #include <folly/Subprocess.h>
-#include <folly/experimental/TestUtil.h>
 #include <folly/experimental/io/FsUtil.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
+#include <folly/testing/TestUtil.h>
 
 using namespace folly;
 using namespace folly::test;
@@ -64,10 +64,11 @@ TEST(File, Locks) {
 
   enum LockMode { EXCLUSIVE, SHARED };
   auto testLock = [&](LockMode mode, bool expectedSuccess) {
-    auto ret = Subprocess({helper.string(),
-                           mode == SHARED ? "-s" : "-x",
-                           tempFile.path().string()})
-                   .wait();
+    auto ret =
+        Subprocess({helper.string(),
+                    mode == SHARED ? "-s" : "-x",
+                    tempFile.path().string()})
+            .wait();
     EXPECT_TRUE(ret.exited());
     if (ret.exited()) {
       EXPECT_EQ(expectedSuccess ? 0 : 42, ret.exitStatus());

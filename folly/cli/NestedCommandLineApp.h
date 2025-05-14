@@ -71,6 +71,16 @@ class NestedCommandLineApp {
       const std::vector<std::string>&)>
       Command;
 
+  struct CommandInfo {
+    std::string argStr;
+    std::string shortHelp;
+    std::string fullHelp;
+    Command command;
+    boost::program_options::options_description options;
+    folly::Optional<boost::program_options::positional_options_description>
+        positionalOptions;
+  };
+
   static constexpr StringPiece const kHelpCommand = "help";
   static constexpr StringPiece const kShortHelpCommand = "h";
   static constexpr StringPiece const kVersionCommand = "version";
@@ -91,12 +101,14 @@ class NestedCommandLineApp {
       std::string programHelpFooter = std::string(),
       InitFunction initFunction = InitFunction());
 
+#if FOLLY_HAVE_LIBGFLAGS && __has_include(<gflags/gflags.h>)
   /**
    * Add GFlags to the list of supported options with the given style.
    */
   void addGFlags(ProgramOptionsStyle style = ProgramOptionsStyle::GNU) {
     globalOptions_.add(getGFlags(style));
   }
+#endif
 
   /**
    * Return the global options object, so you can add options.
@@ -104,6 +116,12 @@ class NestedCommandLineApp {
   boost::program_options::options_description& globalOptions() {
     return globalOptions_;
   }
+
+  /*
+   * Return the commands map, so you can see the registered commands and get
+   * access to their respective options descriptions.
+   */
+  const std::map<std::string, CommandInfo>& commands() { return commands_; }
 
   /**
    * Add a command.
@@ -166,17 +184,8 @@ class NestedCommandLineApp {
 
  private:
   void doRun(const std::vector<std::string>& args);
-  const std::string& resolveAlias(const std::string& name) const;
 
-  struct CommandInfo {
-    std::string argStr;
-    std::string shortHelp;
-    std::string fullHelp;
-    Command command;
-    boost::program_options::options_description options;
-    folly::Optional<boost::program_options::positional_options_description>
-        positionalOptions;
-  };
+  const std::string& resolveAlias(const std::string& name) const;
 
   const std::pair<const std::string, CommandInfo>& findCommand(
       const std::string& name) const;

@@ -40,11 +40,11 @@
 #if FOLLY_HAVE_LIBZ
 #include <folly/compression/Zlib.h>
 
-namespace zlib = folly::io::zlib;
+namespace zlib = folly::compression::zlib;
 #endif
 
 namespace folly {
-namespace io {
+namespace compression {
 namespace test {
 
 class DataHolder {
@@ -679,27 +679,27 @@ TEST_P(StreamingUnitTest, stateTransitions) {
     auto output = empty ? MutableByteRange{} : out;
     return codec_->compressStream(input, output, flushOp);
   };
-  auto compress_all = [&](bool expect,
-                          StreamCodec::FlushOp flushOp =
-                              StreamCodec::FlushOp::NONE,
-                          bool empty = false) {
-    auto input = in;
-    auto output = empty ? MutableByteRange{} : out;
-    while (!input.empty()) {
-      if (expect) {
-        EXPECT_TRUE(codec_->compressStream(input, output, flushOp));
-      } else {
-        EXPECT_FALSE(codec_->compressStream(input, output, flushOp));
-      }
-    }
-  };
-  auto uncompress = [&](StreamCodec::FlushOp flushOp =
-                            StreamCodec::FlushOp::NONE,
-                        bool empty = false) {
-    auto input = in;
-    auto output = empty ? MutableByteRange{} : out;
-    return codec_->uncompressStream(input, output, flushOp);
-  };
+  auto compress_all =
+      [&](bool expect,
+          StreamCodec::FlushOp flushOp = StreamCodec::FlushOp::NONE,
+          bool empty = false) {
+        auto input = in;
+        auto output = empty ? MutableByteRange{} : out;
+        while (!input.empty()) {
+          if (expect) {
+            EXPECT_TRUE(codec_->compressStream(input, output, flushOp));
+          } else {
+            EXPECT_FALSE(codec_->compressStream(input, output, flushOp));
+          }
+        }
+      };
+  auto uncompress =
+      [&](StreamCodec::FlushOp flushOp = StreamCodec::FlushOp::NONE,
+          bool empty = false) {
+        auto input = in;
+        auto output = empty ? MutableByteRange{} : out;
+        return codec_->uncompressStream(input, output, flushOp);
+      };
 
   // compression flow
   if (!codec_->needsDataLength()) {
@@ -801,6 +801,7 @@ class StreamingCompressionTest
   void runResetStreamTest(DataHolder const& dh);
   void runCompressStreamTest(DataHolder const& dh);
   void runUncompressStreamTest(DataHolder const& dh);
+  void runFlushNoneTest(DataHolder const& dh);
   void runFlushTest(DataHolder const& dh);
 
  private:
@@ -828,18 +829,29 @@ static std::unique_ptr<IOBuf> compressSome(
     ByteRange data,
     uint64_t bufferSize,
     StreamCodec::FlushOp flush) {
-  bool result;
+  bool finished;
   IOBufQueue queue;
-  do {
+  for (;;) {
     auto buffer = IOBuf::create(bufferSize);
     buffer->append(buffer->capacity());
     MutableByteRange output{buffer->writableData(), buffer->length()};
 
-    result = codec->compressStream(data, output, flush);
+    finished = codec->compressStream(data, output, flush);
     buffer->trimEnd(output.size());
     queue.append(std::move(buffer));
 
-  } while (!(flush == StreamCodec::FlushOp::NONE && data.empty()) && !result);
+    if (flush == StreamCodec::FlushOp::NONE) {
+      EXPECT_FALSE(finished)
+          << "compressStream() must return false if flush == NONE";
+      if (data.empty()) {
+        break;
+      }
+    }
+
+    if (finished) {
+      break;
+    }
+  }
   EXPECT_TRUE(data.empty());
   return queue.move();
 }
@@ -887,7 +899,7 @@ TEST_P(StreamingCompressionTest, resetStream) {
 }
 
 void StreamingCompressionTest::runCompressStreamTest(
-    const folly::io::test::DataHolder& dh) {
+    const folly::compression::test::DataHolder& dh) {
   auto const inputs = split(dh.data(uncompressedLength_));
 
   IOBufQueue queue;
@@ -912,7 +924,7 @@ TEST_P(StreamingCompressionTest, compressStream) {
 }
 
 void StreamingCompressionTest::runUncompressStreamTest(
-    const folly::io::test::DataHolder& dh) {
+    const folly::compression::test::DataHolder& dh) {
   const auto flush =
       hasFlush() ? StreamCodec::FlushOp::FLUSH : StreamCodec::FlushOp::NONE;
   auto const data = IOBuf::wrapBuffer(dh.data(uncompressedLength_));
@@ -989,6 +1001,54 @@ TEST_P(StreamingCompressionTest, testFlush) {
   }
   runFlushTest(constantDataHolder);
   runFlushTest(randomDataHolder);
+}
+
+void StreamingCompressionTest::runFlushNoneTest(DataHolder const& dh) {
+  auto const inputs = split(dh.data(uncompressedLength_));
+  auto uncodec = getStreamCodec(codec_->type());
+
+  IOBufQueue queue;
+  if (codec_->needsDataLength()) {
+    codec_->resetStream(uncompressedLength_);
+  } else {
+    codec_->resetStream();
+  }
+  for (auto input : inputs) {
+    // Compress some data without flushing
+    // This tests that we never return true when flush == NONE
+    auto compressed = compressSome(
+        codec_.get(), input, chunkSize_, StreamCodec::FlushOp::NONE);
+    auto compressedRange = compressed->coalesce();
+    if (!compressedRange.empty()) {
+      // Uncompress the compressed data
+      auto [finished, uncompressed] = uncompressSome(
+          uncodec.get(),
+          compressedRange,
+          chunkSize_,
+          StreamCodec::FlushOp::NONE);
+      // All compressed data should have been consumed
+      ASSERT_TRUE(compressedRange.empty());
+      // The frame isn't complete
+      ASSERT_FALSE(finished);
+      queue.append(std::move(uncompressed));
+    }
+  }
+  auto compressed =
+      compressSome(codec_.get(), {}, chunkSize_, StreamCodec::FlushOp::END);
+  auto compressedRange = compressed->coalesce();
+  auto [finished, uncompressed] = uncompressSome(
+      uncodec.get(), compressedRange, chunkSize_, StreamCodec::FlushOp::END);
+  // All compressed data should have been consumed
+  ASSERT_TRUE(compressedRange.empty());
+  // The frame is complete
+  ASSERT_TRUE(finished);
+  queue.append(std::move(uncompressed));
+  EXPECT_EQ(hashIOBuf(queue.move().get()), dh.hash(uncompressedLength_));
+}
+
+TEST_P(StreamingCompressionTest, testFlushNone) {
+  runFlushNoneTest(constantDataHolder);
+  runFlushNoneTest(randomDataHolder);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1578,5 +1638,5 @@ INSTANTIATE_TEST_SUITE_P(
 #endif // FOLLY_HAVE_LIBZ
 
 } // namespace test
-} // namespace io
+} // namespace compression
 } // namespace folly

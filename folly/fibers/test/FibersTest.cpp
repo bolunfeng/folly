@@ -23,8 +23,11 @@
 #include <folly/Conv.h>
 #include <folly/Memory.h>
 #include <folly/Random.h>
+#include <folly/coro/BlockingWait.h>
+#include <folly/coro/GtestHelpers.h>
+#include <folly/coro/Timeout.h>
+#include <folly/coro/WithCancellation.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
-#include <folly/experimental/coro/BlockingWait.h>
 #include <folly/fibers/AddTasks.h>
 #include <folly/fibers/AtomicBatchDispatcher.h>
 #include <folly/fibers/BatchDispatcher.h>
@@ -464,8 +467,9 @@ TEST(FiberManager, awaitThrow) {
 
         EXPECT_THROW(
             await_async([&](Promise<int> p) {
-              evb.runInEventBaseThread(
-                  [p = std::move(p)]() mutable { p.setValue(42); });
+              evb.runInEventBaseThread([p = std::move(p)]() mutable {
+                p.setValue(42);
+              });
               throw ExpectedException();
             }),
             ExpectedException);
@@ -1055,8 +1059,9 @@ TEST(FiberManager, runInMainContext) {
   bool checkRan = false;
 
   int mainLocation;
-  manager.runInMainContext(
-      [&]() { expectMainContext(checkRan, &mainLocation, nullptr); });
+  manager.runInMainContext([&]() {
+    expectMainContext(checkRan, &mainLocation, nullptr);
+  });
   EXPECT_TRUE(checkRan);
 
   checkRan = false;
@@ -1204,12 +1209,14 @@ TEST(FiberManager, remoteFiberBasic) {
   result[0] = result[1] = 0;
   folly::Optional<Promise<int>> savedPromise[2];
   manager.addTask([&]() {
-    result[0] = await_async(
-        [&](Promise<int> promise) { savedPromise[0] = std::move(promise); });
+    result[0] = await_async([&](Promise<int> promise) {
+      savedPromise[0] = std::move(promise);
+    });
   });
   manager.addTask([&]() {
-    result[1] = await_async(
-        [&](Promise<int> promise) { savedPromise[1] = std::move(promise); });
+    result[1] = await_async([&](Promise<int> promise) {
+      savedPromise[1] = std::move(promise);
+    });
   });
 
   manager.loopUntilNoReady();
@@ -1242,14 +1249,16 @@ TEST(FiberManager, addTaskRemoteBasic) {
 
   std::thread remoteThread0{[&]() {
     manager.addTaskRemote([&]() {
-      result[0] = await_async(
-          [&](Promise<int> promise) { savedPromise[0] = std::move(promise); });
+      result[0] = await_async([&](Promise<int> promise) {
+        savedPromise[0] = std::move(promise);
+      });
     });
   }};
   std::thread remoteThread1{[&]() {
     manager.addTaskRemote([&]() {
-      result[1] = await_async(
-          [&](Promise<int> promise) { savedPromise[1] = std::move(promise); });
+      result[1] = await_async([&](Promise<int> promise) {
+        savedPromise[1] = std::move(promise);
+      });
     });
   }};
   remoteThread0.join();
@@ -1294,8 +1303,9 @@ TEST(FiberManager, remoteHasReadyTasks) {
   FiberManager fm(std::make_unique<SimpleLoopController>());
   std::thread remote([&]() {
     fm.addTaskRemote([&]() {
-      result = await_async(
-          [&](Promise<int> promise) { savedPromise = std::move(promise); });
+      result = await_async([&](Promise<int> promise) {
+        savedPromise = std::move(promise);
+      });
       EXPECT_TRUE(fm.hasTasks());
     });
   });
@@ -1439,11 +1449,13 @@ TEST(FiberManager, RequestContext) {
     auto rcontext1 = folly::RequestContext::get();
     fm.addTask([&, rcontext1]() {
       EXPECT_EQ(rcontext1, folly::RequestContext::get());
-      baton1.wait(
-          [&]() { EXPECT_EQ(rcontext1, folly::RequestContext::get()); });
+      baton1.wait([&]() {
+        EXPECT_EQ(rcontext1, folly::RequestContext::get());
+      });
       EXPECT_EQ(rcontext1, folly::RequestContext::get());
-      runInMainContext(
-          [&]() { EXPECT_EQ(rcontext1, folly::RequestContext::get()); });
+      runInMainContext([&]() {
+        EXPECT_EQ(rcontext1, folly::RequestContext::get());
+      });
       checkRun1 = true;
     });
   }
@@ -1694,8 +1706,9 @@ TEST(FiberManager, remoteFutureVoidUnitTest) {
       dynamic_cast<SimpleLoopController&>(fiberManager.loopController());
 
   bool ranLocal = false;
-  folly::Future<folly::Unit> futureLocal =
-      fiberManager.addTaskFuture([&]() { ranLocal = true; });
+  folly::Future<folly::Unit> futureLocal = fiberManager.addTaskFuture([&]() {
+    ranLocal = true;
+  });
 
   bool ranRemote = false;
   folly::Future<folly::Unit> futureRemote =
@@ -1750,7 +1763,7 @@ TEST(FiberManager, nestedFiberManagersSameEvb) {
 
   // Use frozen options
   FiberManager::Options used;
-  used.stackSize = 1024;
+  used.stackSize = 2048;
   FiberManager::FrozenOptions options{used};
   auto& fm2 = getFiberManager(evb, options);
   EXPECT_NE(&fm1, &fm2);
@@ -1759,12 +1772,12 @@ TEST(FiberManager, nestedFiberManagersSameEvb) {
   EXPECT_EQ(&fm2, &getFiberManager(evb, options));
   EXPECT_EQ(&fm2, &getFiberManager(evb, FiberManager::FrozenOptions{used}));
   FiberManager::Options same;
-  same.stackSize = 1024;
+  same.stackSize = 2048;
   EXPECT_EQ(&fm2, &getFiberManager(evb, FiberManager::FrozenOptions{same}));
 
   // Different option
   FiberManager::Options differ;
-  differ.stackSize = 2048;
+  differ.stackSize = 4096;
   auto& fm3 = getFiberManager(evb, FiberManager::FrozenOptions{differ});
   EXPECT_NE(&fm1, &fm3);
   EXPECT_NE(&fm2, &fm3);
@@ -1775,8 +1788,9 @@ TEST(FiberManager, nestedFiberManagersSameEvb) {
         EXPECT_EQ(&fm1, FiberManager::getFiberManagerUnsafe());
 
         getFiberManager(evb, options)
-            .addTaskFuture(
-                [&] { EXPECT_EQ(&fm2, FiberManager::getFiberManagerUnsafe()); })
+            .addTaskFuture([&] {
+              EXPECT_EQ(&fm2, FiberManager::getFiberManagerUnsafe());
+            })
             .wait();
       })
       .waitVia(&evb);
@@ -1899,6 +1913,85 @@ TEST(FiberManager, semaphore) {
   EXPECT_EQ(sem.getCapacity(), kNumTokens);
   EXPECT_EQ(sem.getAvailableTokens(), kNumTokens);
 }
+
+#if FOLLY_HAS_COROUTINES
+
+CO_TEST(FiberManager, SemaphoreCoTryWaitForCanCancelOrTimeout) {
+  using namespace std::chrono_literals;
+
+  {
+    // Pre-cancel
+    Semaphore sem{0};
+    folly::CancellationSource cancelSource;
+    cancelSource.requestCancellation();
+    EXPECT_THROW(
+        co_await folly::coro::co_withCancellation(
+            cancelSource.getToken(), sem.co_try_wait_for(1h)),
+        folly::OperationCancelled);
+  }
+  {
+    // Cancel
+    Semaphore sem{0};
+    folly::CancellationSource cancelSource;
+    auto t = std::thread([&]() { cancelSource.requestCancellation(); });
+    EXPECT_THROW(
+        co_await folly::coro::co_withCancellation(
+            cancelSource.getToken(), sem.co_try_wait_for(1h)),
+        folly::OperationCancelled);
+    t.join();
+  }
+  {
+    // Timeout
+    Semaphore sem{0};
+    folly::CancellationSource cancelSource;
+    EXPECT_THROW(
+        co_await folly::coro::co_withCancellation(
+            cancelSource.getToken(), sem.co_try_wait_for(1ms)),
+        folly::OperationCancelled);
+  }
+}
+
+CO_TEST(FiberManager, StressTestSemaphoreCoTryWaitFor) {
+  static constexpr size_t kIterations = 10000;
+
+  Semaphore readyToRead{0};
+  Semaphore sem{0};
+
+  auto t = std::thread([&]() {
+    for (size_t i = 0; i < kIterations; ++i) {
+      readyToRead.wait();
+      sem.signal();
+    }
+  });
+
+  auto waitForSignal = [&](size_t i) -> folly::coro::Task<void> {
+    std::chrono::milliseconds timeout{0};
+    auto increaseTimeout = [&]() {
+      if (timeout.count() == 0) {
+        timeout = std::chrono::milliseconds{1};
+      } else if (timeout < std::chrono::milliseconds{10000}) {
+        timeout *= 2;
+      }
+    };
+    readyToRead.signal();
+    while (true) {
+      try {
+        co_await sem.co_try_wait_for(timeout);
+        co_return;
+      } catch (folly::OperationCancelled&) {
+        increaseTimeout();
+      }
+    }
+  };
+
+  for (size_t i = 0; i < kIterations; ++i) {
+    co_await waitForSignal(i);
+  }
+
+  t.join();
+}
+
+#endif
 
 TEST(FiberManager, batchSemaphore) {
   static constexpr size_t kTasks = 10;
@@ -2071,8 +2164,9 @@ TEST(FiberManager, batchDispatchTest) {
   executor.add([&]() {
     int batchSize = 10;
     for (int i = 0; i < batchSize; i++) {
-      executor.add(
-          [=, &executor]() { singleBatchDispatch(executor, batchSize, i); });
+      executor.add([=, &executor]() {
+        singleBatchDispatch(executor, batchSize, i);
+      });
     }
   });
   evb.loop();
@@ -2081,8 +2175,9 @@ TEST(FiberManager, batchDispatchTest) {
   executor.add([&]() {
     int batchSize = 10;
     for (int i = 0; i < batchSize; i++) {
-      executor.add(
-          [=, &executor]() { singleBatchDispatch(executor, batchSize, i); });
+      executor.add([=, &executor]() {
+        singleBatchDispatch(executor, batchSize, i);
+      });
     }
   });
   evb.loop();
@@ -2194,8 +2289,9 @@ TEST(FiberManager, batchDispatchExceptionHandlingTest) {
   executor.add([&]() {
     int totalNumberOfElements = 5;
     for (int i = 0; i < totalNumberOfElements; i++) {
-      executor.add(
-          [=, &executor]() { batchDispatchExceptionHandling(executor, i); });
+      executor.add([=, &executor]() {
+        batchDispatchExceptionHandling(executor, i);
+      });
     }
   });
   evb.loop();
@@ -2566,7 +2662,7 @@ TEST(TimedMutex, ThreadFiberDeadlockOrder) {
     mutex.unlock();
   });
 
-  fm.addTask([&] { std::lock_guard<TimedMutex> lg(mutex); });
+  fm.addTask([&] { std::lock_guard lg(mutex); });
   fm.addTask([&] {
     runInMainContext([&] {
       auto locked = mutex.try_lock_for(std::chrono::seconds{1});
@@ -2892,8 +2988,9 @@ TEST(FiberManager, addTaskRemoteFutureTry) {
 
   EXPECT_EQ(
       42,
-      fm.addTaskRemoteFuture(
-            [&]() -> folly::Try<int> { return folly::Try<int>(42); })
+      fm.addTaskRemoteFuture([&]() -> folly::Try<int> {
+          return folly::Try<int>(42);
+        })
           .getVia(&evb)
           .value());
 }

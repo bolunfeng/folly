@@ -62,17 +62,15 @@ void configureProtocolVersion(SSL_CTX* ctx, SSLContext::SSLVersion version) {
     case SSLContext::SSLVersion::TLSv1_2:
       minVersion = TLS1_2_VERSION;
       break;
-#if FOLLY_OPENSSL_HAS_TLS13
     case SSLContext::SSLVersion::TLSv1_3:
       minVersion = TLS1_3_VERSION;
       break;
-#endif
     case SSLContext::SSLVersion::SSLv2:
     default:
       // do nothing
       break;
   }
-  int setMinProtoResult = SSL_CTX_set_min_proto_version(ctx, minVersion);
+  const auto setMinProtoResult = SSL_CTX_set_min_proto_version(ctx, minVersion);
   DCHECK(setMinProtoResult == 1)
       << sformat("unsupported min TLS protocol version: 0x{:04x}", minVersion);
 }
@@ -143,7 +141,7 @@ void SSLContext::setClientECCurvesList(
   }
   std::string ecCurvesList;
   join(":", ecCurves, ecCurvesList);
-  int rc = SSL_CTX_set1_curves_list(ctx_, ecCurvesList.c_str());
+  const auto rc = SSL_CTX_set1_curves_list(ctx_, ecCurvesList.c_str());
   if (rc == 0) {
     throw std::runtime_error("SSL_CTX_set1_curves_list " + getErrors());
   }
@@ -153,14 +151,12 @@ void SSLContext::setSupportedGroups(const std::vector<std::string>& groups) {
   if (groups.empty()) {
     return;
   }
-#if FOLLY_OPENSSL_PREREQ(1, 1, 1)
   std::string groupsList;
   join(":", groups, groupsList);
-  int rc = SSL_CTX_set1_groups_list(ctx_, groupsList.c_str());
+  const auto rc = SSL_CTX_set1_groups_list(ctx_, groupsList.c_str());
   if (rc == 0) {
     throw std::runtime_error("SSL_CTX_set1_curves " + getErrors());
   }
-#endif
 }
 
 void SSLContext::setServerECCurve(const std::string& curveName) {
@@ -205,7 +201,7 @@ void SSLContext::setX509VerifyParam(
 }
 
 void SSLContext::setCiphersOrThrow(const std::string& ciphers) {
-  int rc = SSL_CTX_set_cipher_list(ctx_, ciphers.c_str());
+  const auto rc = SSL_CTX_set_cipher_list(ctx_, ciphers.c_str());
   if (rc == 0) {
     throw std::runtime_error("SSL_CTX_set_cipher_list: " + getErrors());
   }
@@ -213,7 +209,7 @@ void SSLContext::setCiphersOrThrow(const std::string& ciphers) {
 }
 
 void SSLContext::setSigAlgsOrThrow(const std::string& sigalgs) {
-  int rc = SSL_CTX_set1_sigalgs_list(ctx_, sigalgs.c_str());
+  const auto rc = SSL_CTX_set1_sigalgs_list(ctx_, sigalgs.c_str());
   if (rc == 0) {
     throw std::runtime_error("SSL_CTX_set1_sigalgs_list " + getErrors());
   }
@@ -865,7 +861,6 @@ void SSLContext::setSessionLifecycleCallbacks(
   sessionLifecycleCallbacks_ = std::move(cb);
 }
 
-#if FOLLY_OPENSSL_PREREQ(1, 1, 1)
 void SSLContext::setCiphersuitesOrThrow(const std::string& ciphersuites) {
   auto rc = SSL_CTX_set_ciphersuites(ctx_, ciphersuites.c_str());
   if (rc == 0) {
@@ -881,7 +876,6 @@ void SSLContext::setAllowNoDheKex(bool flag) {
     SSL_CTX_clear_options(ctx_, opt);
   }
 }
-#endif // FOLLY_OPENSSL_PREREQ(1, 1, 1)
 
 void SSLContext::setTicketHandler(
     std::unique_ptr<OpenSSLTicketHandler> handler) {

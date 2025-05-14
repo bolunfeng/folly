@@ -27,9 +27,9 @@
 
 #include <folly/Benchmark.h>
 #include <folly/SharedMutex.h>
-#include <folly/experimental/flat_combining/FlatCombining.h>
 #include <folly/lang/Aligned.h>
 #include <folly/synchronization/DistributedMutex.h>
+#include <folly/synchronization/FlatCombining.h>
 #include <folly/synchronization/SmallLocks.h>
 
 /* "Work cycle" is just an additional nop loop iteration.
@@ -333,7 +333,7 @@ static void runFairness(std::size_t numThreads) {
         }
       }
       {
-        std::lock_guard<std::mutex> g(rlock);
+        std::lock_guard g(rlock);
         results.push_back(value);
         maxes.push_back(max);
         aqTime.push_back(time);
@@ -384,13 +384,17 @@ void runUncontended(std::size_t iters) {
   auto&& mutex = Mutex{};
   for (auto i = std::size_t{0}; i < iters; ++i) {
     folly::makeUnpredictable(mutex);
-    auto lck = std::unique_lock<Mutex>{mutex};
+    auto lck = std::unique_lock{mutex};
     folly::makeUnpredictable(mutex);
   }
 }
 
 BENCHMARK(StdMutexUncontendedBenchmark, iters) {
   runUncontended<std::mutex>(iters);
+}
+
+BENCHMARK(StdSharedMutexUncontendedBenchmark, iters) {
+  runUncontended<std::shared_mutex>(iters);
 }
 
 BENCHMARK(MicroSpinLockUncontendedBenchmark, iters) {
@@ -426,8 +430,7 @@ struct VirtualBase {
 };
 
 struct VirtualImpl : VirtualBase {
-  void foo() override { /* noop */
-  }
+  void foo() override { /* noop */ }
   ~VirtualImpl() override {}
 };
 
@@ -452,6 +455,9 @@ BENCHMARK_DRAW_LINE();
 
 static void std_mutex(size_t numOps, size_t numThreads) {
   runContended<std::mutex>(numOps, numThreads);
+}
+static void std_shared_mutex(size_t numOps, size_t numThreads) {
+  runContended<std::shared_mutex>(numOps, numThreads);
 }
 static void folly_microspin(size_t numOps, size_t numThreads) {
   runContended<InitLock<folly::MicroSpinLock>>(numOps, numThreads);
@@ -480,6 +486,9 @@ static void folly_flatcombining_caching(size_t numOps, size_t numThreads) {
 
 static void std_mutex_simple(size_t numOps, size_t numThreads) {
   runContended<std::mutex, Ints>(numOps, numThreads, 0);
+}
+static void std_shared_mutex_simple(size_t numOps, size_t numThreads) {
+  runContended<std::shared_mutex, Ints>(numOps, numThreads, 0);
 }
 static void folly_microspin_simple(size_t numOps, size_t numThreads) {
   runContended<InitLock<folly::MicroSpinLock>, Ints>(numOps, numThreads, 0);
@@ -518,6 +527,7 @@ static void folly_flatcombining_caching_simple(size_t ops, size_t threads) {
 
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 1thread, 1)
+BENCH_BASE(std_shared_mutex, 1thread, 1)
 BENCH_REL(folly_microspin, 1thread, 1)
 BENCH_REL(folly_picospin, 1thread, 1)
 BENCH_REL(folly_microlock, 1thread, 1)
@@ -528,6 +538,7 @@ BENCH_REL(folly_flatcombining_no_caching, 1thread, 1)
 BENCH_REL(folly_flatcombining_caching, 1thread, 1)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 2thread, 2)
+BENCH_BASE(std_shared_mutex, 2thread, 2)
 BENCH_REL(folly_microspin, 2thread, 2)
 BENCH_REL(folly_picospin, 2thread, 2)
 BENCH_REL(folly_microlock, 2thread, 2)
@@ -538,6 +549,7 @@ BENCH_REL(folly_flatcombining_no_caching, 2thread, 2)
 BENCH_REL(folly_flatcombining_caching, 2thread, 2)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 4thread, 4)
+BENCH_BASE(std_shared_mutex, 4thread, 4)
 BENCH_REL(folly_microspin, 4thread, 4)
 BENCH_REL(folly_picospin, 4thread, 4)
 BENCH_REL(folly_microlock, 4thread, 4)
@@ -548,6 +560,7 @@ BENCH_REL(folly_flatcombining_no_caching, 4thread, 4)
 BENCH_REL(folly_flatcombining_caching, 4thread, 4)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 8thread, 8)
+BENCH_BASE(std_shared_mutex, 8thread, 8)
 BENCH_REL(folly_microspin, 8thread, 8)
 BENCH_REL(folly_picospin, 8thread, 8)
 BENCH_REL(folly_microlock, 8thread, 8)
@@ -558,6 +571,7 @@ BENCH_REL(folly_flatcombining_no_caching, 8thread, 8)
 BENCH_REL(folly_flatcombining_caching, 8thread, 8)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 16thread, 16)
+BENCH_BASE(std_shared_mutex, 16thread, 16)
 BENCH_REL(folly_microspin, 16thread, 16)
 BENCH_REL(folly_picospin, 16thread, 16)
 BENCH_REL(folly_microlock, 16thread, 16)
@@ -568,6 +582,7 @@ BENCH_REL(folly_flatcombining_no_caching, 16thread, 16)
 BENCH_REL(folly_flatcombining_caching, 16thread, 16)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 32thread, 32)
+BENCH_BASE(std_shared_mutex, 32thread, 32)
 BENCH_REL(folly_microspin, 32thread, 32)
 BENCH_REL(folly_picospin, 32thread, 32)
 BENCH_REL(folly_microlock, 32thread, 32)
@@ -578,6 +593,7 @@ BENCH_REL(folly_flatcombining_no_caching, 32thread, 32)
 BENCH_REL(folly_flatcombining_caching, 32thread, 32)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 64thread, 64)
+BENCH_BASE(std_shared_mutex, 64thread, 64)
 BENCH_REL(folly_microspin, 64thread, 64)
 BENCH_REL(folly_picospin, 64thread, 64)
 BENCH_REL(folly_microlock, 64thread, 64)
@@ -588,6 +604,7 @@ BENCH_REL(folly_flatcombining_no_caching, 64thread, 64)
 BENCH_REL(folly_flatcombining_caching, 64thread, 64)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex, 128thread, 128)
+BENCH_BASE(std_shared_mutex, 128thread, 128)
 BENCH_REL(folly_microspin, 128thread, 128)
 BENCH_REL(folly_picospin, 128thread, 128)
 BENCH_REL(folly_microlock, 128thread, 128)
@@ -599,6 +616,7 @@ BENCH_REL(folly_flatcombining_caching, 128thread, 128)
 
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 1thread, 1)
+BENCH_BASE(std_shared_mutex_simple, 1thread, 1)
 BENCH_REL(folly_microspin_simple, 1thread, 1)
 BENCH_REL(folly_picospin_simple, 1thread, 1)
 BENCH_REL(folly_microlock_simple, 1thread, 1)
@@ -612,6 +630,7 @@ BENCH_REL(atomic_fetch_xor, 1thread, 1)
 BENCH_REL(atomic_cas, 1thread, 1)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 2thread, 2)
+BENCH_BASE(std_shared_mutex_simple, 2thread, 2)
 BENCH_REL(folly_microspin_simple, 2thread, 2)
 BENCH_REL(folly_picospin_simple, 2thread, 2)
 BENCH_REL(folly_microlock_simple, 2thread, 2)
@@ -625,6 +644,7 @@ BENCH_REL(atomic_fetch_xor, 2thread, 2)
 BENCH_REL(atomic_cas, 2thread, 2)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 4thread, 4)
+BENCH_BASE(std_shared_mutex_simple, 4thread, 4)
 BENCH_REL(folly_microspin_simple, 4thread, 4)
 BENCH_REL(folly_picospin_simple, 4thread, 4)
 BENCH_REL(folly_microlock_simple, 4thread, 4)
@@ -638,6 +658,7 @@ BENCH_REL(atomic_fetch_xor, 4thread, 4)
 BENCH_REL(atomic_cas, 4thread, 4)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 8thread, 8)
+BENCH_BASE(std_shared_mutex_simple, 8thread, 8)
 BENCH_REL(folly_microspin_simple, 8thread, 8)
 BENCH_REL(folly_picospin_simple, 8thread, 8)
 BENCH_REL(folly_microlock_simple, 8thread, 8)
@@ -651,6 +672,7 @@ BENCH_REL(atomic_fetch_xor, 8thread, 8)
 BENCH_REL(atomic_cas, 8thread, 8)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 16thread, 16)
+BENCH_BASE(std_shared_mutex_simple, 16thread, 16)
 BENCH_REL(folly_microspin_simple, 16thread, 16)
 BENCH_REL(folly_picospin_simple, 16thread, 16)
 BENCH_REL(folly_microlock_simple, 16thread, 16)
@@ -664,6 +686,7 @@ BENCH_REL(atomic_fetch_xor, 16thread, 16)
 BENCH_REL(atomic_cas, 16thread, 16)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 32thread, 32)
+BENCH_BASE(std_shared_mutex_simple, 32thread, 32)
 BENCH_REL(folly_microspin_simple, 32thread, 32)
 BENCH_REL(folly_picospin_simple, 32thread, 32)
 BENCH_REL(folly_microlock_simple, 32thread, 32)
@@ -677,6 +700,7 @@ BENCH_REL(atomic_fetch_xor, 32thread, 32)
 BENCH_REL(atomic_cas, 32thread, 32)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 64thread, 64)
+BENCH_BASE(std_shared_mutex_simple, 64thread, 64)
 BENCH_REL(folly_microspin_simple, 64thread, 64)
 BENCH_REL(folly_picospin_simple, 64thread, 64)
 BENCH_REL(folly_microlock_simple, 64thread, 64)
@@ -690,6 +714,7 @@ BENCH_REL(atomic_fetch_xor, 64thread, 64)
 BENCH_REL(atomic_cas, 64thread, 64)
 BENCHMARK_DRAW_LINE();
 BENCH_BASE(std_mutex_simple, 128thread, 128)
+BENCH_BASE(std_shared_mutex_simple, 128thread, 128)
 BENCH_REL(folly_microspin_simple, 128thread, 128)
 BENCH_REL(folly_picospin_simple, 128thread, 128)
 BENCH_REL(folly_microlock_simple, 128thread, 128)
@@ -710,11 +735,12 @@ void fairnessTest(std::string type, std::size_t numThreads) {
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   if (FLAGS_run_fairness) {
     for (auto numThreads : {2, 4, 8, 16, 32, 64}) {
       fairnessTest<std::mutex>("std::mutex", numThreads);
+      fairnessTest<std::shared_mutex>("std::shared_mutex", numThreads);
       fairnessTest<InitLock<folly::MicroSpinLock>>(
           "folly::MicroSpinLock", numThreads);
       fairnessTest<InitLock<folly::PicoSpinLock<std::uint16_t>>>(

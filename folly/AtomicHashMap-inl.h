@@ -44,8 +44,9 @@ AtomicHashMap<
     ProbeFcn,
     KeyConvertFcn>::AtomicHashMap(size_t finalSizeEst, const Config& config)
     : kGrowthFrac_(
-          config.growthFactor < 0 ? 1.0f - config.maxLoadFactor
-                                  : config.growthFactor) {
+          config.growthFactor < 0
+              ? 1.0f - config.maxLoadFactor
+              : config.growthFactor) {
   CHECK(config.maxLoadFactor > 0.0f && config.maxLoadFactor < 1.0f);
   subMaps_[0].store(
       SubMap::create(finalSizeEst, config).release(),
@@ -164,7 +165,8 @@ beginInsertInternal:
     // Alloc a new map and shove it in.  We can change whatever
     // we want because other threads are waiting on us...
     size_t numCellsAllocated =
-        (size_t)(primarySubMap->capacity_ * std::pow(1.0 + kGrowthFrac_, nextMapIdx - 1));
+        (size_t)(primarySubMap->capacity_ *
+                 std::pow(1.0 + kGrowthFrac_, nextMapIdx - 1));
     size_t newSize = size_t(numCellsAllocated * kGrowthFrac_);
     DCHECK(
         subMaps_[nextMapIdx].load(std::memory_order_relaxed) ==

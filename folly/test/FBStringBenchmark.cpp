@@ -25,10 +25,17 @@
 #include <folly/Benchmark.h>
 #include <folly/Random.h>
 #include <folly/container/Foreach.h>
+#include <folly/lang/Keep.h>
 #include <folly/portability/GFlags.h>
 
 using namespace std;
 using namespace folly;
+
+extern "C" FOLLY_KEEP void check_folly_fbstring_core_char_ctor_small(
+    fbstring_core<char>* out, const char* data, size_t size) {
+  assume(size < sizeof(*out));
+  ::new (out) fbstring_core<char>(data, size);
+}
 
 static const int seed = folly::randomNumberSeed();
 using RandomT = std::mt19937;
@@ -44,14 +51,18 @@ template <class String>
 void randomString(String* toFill, size_t size = 1000) {
   assert(toFill);
   toFill->resize(size);
-  FOR_EACH (i, *toFill) { *i = random('a', 'z'); }
+  FOR_EACH (i, *toFill) {
+    *i = random('a', 'z');
+  }
 }
 
 template <class String>
 void randomBinaryString(String* toFill, size_t size = 1000) {
   assert(toFill);
   toFill->resize(size);
-  FOR_EACH (i, *toFill) { *i = random('0', '1'); }
+  FOR_EACH (i, *toFill) {
+    *i = random('0', '1');
+  }
 }
 
 template <class String, class Integral>
@@ -82,7 +93,7 @@ std::list<char> RandomList(unsigned int maxSize) {
 #undef STRING
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
   return 0;
 }

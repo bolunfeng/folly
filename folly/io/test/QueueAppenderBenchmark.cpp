@@ -64,13 +64,17 @@ void runPushBenchmark(int64_t iters, const std::string& str) {
 
 BENCHMARK(push_64b, iters) {
   std::string data;
-  BENCHMARK_SUSPEND { data = std::string(64, 'f'); }
+  BENCHMARK_SUSPEND {
+    data = std::string(64, 'f');
+  }
   runPushBenchmark(iters, data);
 }
 
 BENCHMARK(push_1024b, iters) {
   std::string data;
-  BENCHMARK_SUSPEND { data = std::string(1024, 'b'); }
+  BENCHMARK_SUSPEND {
+    data = std::string(1024, 'b');
+  }
   runPushBenchmark(iters, data);
 }
 
@@ -95,7 +99,9 @@ BENCHMARK(append, iters) {
 
 void preallocate_postallocate_bench(int64_t iters, size_t size) {
   std::string data;
-  BENCHMARK_SUSPEND { data = std::string(size, 'f'); }
+  BENCHMARK_SUSPEND {
+    data = std::string(size, 'f');
+  }
   while (iters--) {
     folly::IOBufQueue queue;
     for (size_t i = 0; i < kBenchmarkSize; ++i) {
@@ -124,7 +130,7 @@ BENCHMARK(preallocate_postallocate_256b, iters) {
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
   return 0;
 }

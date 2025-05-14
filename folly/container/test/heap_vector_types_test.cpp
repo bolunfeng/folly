@@ -64,6 +64,20 @@ struct OneAtATimePolicy {
   }
 };
 
+template <typename T>
+struct CountingAllocator : std::allocator<T> {
+  T* allocate(std::size_t n) {
+    nAllocations += 1;
+    return std::allocator<T>::allocate(n);
+  }
+  int nAllocations{0};
+
+  template <typename U>
+  struct rebind {
+    using other = CountingAllocator<U>;
+  };
+};
+
 struct CountCopyCtor {
   explicit CountCopyCtor() : val_(0), count_(0) {}
 
@@ -820,7 +834,7 @@ TEST(HeapVectorTypes, GrowthPolicy) {
   using SetT = heap_vector_set<
       CountCopyCtor,
       std::less<CountCopyCtor>,
-      std::allocator<CountCopyCtor>,
+      CountingAllocator<CountCopyCtor>,
       OneAtATimePolicy>;
 
   SetT a;
@@ -829,13 +843,9 @@ TEST(HeapVectorTypes, GrowthPolicy) {
   }
   check_invariant(a);
   SetT::iterator it = a.begin();
-  EXPECT_FALSE(it == a.end());
-  if (it != a.end()) {
-    EXPECT_EQ(it->val_, 0);
-    // 1 copy for the initial insertion, 19 more for reallocs on the
-    // additional insertions.
-    EXPECT_EQ(it->count_, 20);
-  }
+  ASSERT_FALSE(it == a.end());
+  EXPECT_EQ(it->count_, 20);
+  EXPECT_EQ(a.get_container().get_allocator().nAllocations, 20);
 
   std::list<CountCopyCtor> v;
   for (int i = 0; i < 20; ++i) {
@@ -843,13 +853,7 @@ TEST(HeapVectorTypes, GrowthPolicy) {
   }
   a.insert(v.begin(), v.end());
   check_invariant(a);
-
-  it = a.begin();
-  EXPECT_FALSE(it == a.end());
-  if (it != a.end()) {
-    EXPECT_EQ(it->val_, 0);
-    EXPECT_EQ(it->count_, folly::kIsLibcpp ? 22 : 23);
-  }
+  EXPECT_EQ(a.get_container().get_allocator().nAllocations, 21);
 }
 
 TEST(HeapVectorTest, EmptyTest) {
@@ -1445,10 +1449,10 @@ TEST(HeapVectorTypes, TestExceptionSafety) {
 
 #if FOLLY_HAS_MEMORY_RESOURCE
 
-using folly::detail::std_pmr::memory_resource;
-using folly::detail::std_pmr::new_delete_resource;
-using folly::detail::std_pmr::null_memory_resource;
-using folly::detail::std_pmr::polymorphic_allocator;
+using std::pmr::memory_resource;
+using std::pmr::new_delete_resource;
+using std::pmr::null_memory_resource;
+using std::pmr::polymorphic_allocator;
 
 namespace {
 
@@ -1601,8 +1605,7 @@ TEST(HeapVectorTypes, TestPmrMoveConstructDifferentAlloc) {
 }
 
 template <typename T>
-using pmr_vector =
-    std::vector<T, folly::detail::std_pmr::polymorphic_allocator<T>>;
+using pmr_vector = std::vector<T, std::pmr::polymorphic_allocator<T>>;
 
 TEST(HeapVectorTypes, TestCreationFromPmrVector) {
   namespace pmr = folly::pmr;
@@ -1767,4 +1770,32 @@ TEST(HeapVectorTypes, TestGetContainer) {
   EXPECT_TRUE(m2.get_container().empty());
   heap_vector_set<int> s;
   EXPECT_TRUE(s.get_container().empty());
+}
+
+TEST(HeapVectorTypes, TestSwapContainer) {
+  heap_vector_set<int> set{1, 2, 3};
+  std::vector<int> swapped{6, 5, 4};
+  set.swap_container(swapped);
+  EXPECT_EQ(swapped, (std::vector<int>{2, 1, 3}));
+  EXPECT_EQ(set.get_container(), (std::vector<int>{5, 4, 6}));
+  swapped = {1, 3, 5};
+  set.swap_container(folly::sorted_unique, swapped);
+  EXPECT_EQ(swapped, (std::vector<int>{5, 4, 6}));
+  EXPECT_EQ(set.get_container(), (std::vector<int>{3, 1, 5}));
+
+  heap_vector_map<int, int> map{{1, 1}, {2, 2}, {3, 3}};
+  std::vector<std::pair<int, int>> swappedMap{{6, 6}, {5, 5}, {4, 4}};
+  map.swap_container(swappedMap);
+  EXPECT_EQ(
+      swappedMap, (std::vector<std::pair<int, int>>{{2, 2}, {1, 1}, {3, 3}}));
+  EXPECT_EQ(
+      map.get_container(),
+      (std::vector<std::pair<int, int>>{{5, 5}, {4, 4}, {6, 6}}));
+  swappedMap = {{1, 1}, {3, 3}, {5, 5}};
+  map.swap_container(folly::sorted_unique, swappedMap);
+  EXPECT_EQ(
+      swappedMap, (std::vector<std::pair<int, int>>{{5, 5}, {4, 4}, {6, 6}}));
+  EXPECT_EQ(
+      map.get_container(),
+      (std::vector<std::pair<int, int>>{{3, 3}, {1, 1}, {5, 5}}));
 }

@@ -78,11 +78,12 @@ class EvictingCacheMap {
 
   // iterator base : returns TPair on dereference
   template <typename Value, typename TIterator>
-  class iterator_base : public boost::iterator_adaptor<
-                            iterator_base<Value, TIterator>,
-                            TIterator,
-                            Value,
-                            boost::bidirectional_traversal_tag> {
+  class iterator_base
+      : public boost::iterator_adaptor<
+            iterator_base<Value, TIterator>,
+            TIterator,
+            Value,
+            boost::bidirectional_traversal_tag> {
    public:
     iterator_base() {}
 
@@ -399,6 +400,39 @@ class EvictingCacheMap {
   }
 
   /**
+   * Emplace a new key-value pair in the dictionary if no element exists for
+   * key, utilizing the configured prunehook
+   * @param key key to associate with value
+   * @param args args to construct TValue in place, to associate with the key
+   * @return a pair consisting of an iterator to the inserted element (or to the
+   *     element that prevented the insertion) and a bool denoting whether the
+   *     insertion took place.
+   */
+  template <typename K, typename... Args>
+  std::pair<iterator, bool> try_emplace(const K& key, Args&&... args) {
+    return emplaceWithPruneHook<K, Args...>(
+        key, std::forward<Args>(args)..., nullptr);
+  }
+
+  /**
+   * Emplace a new key-value pair in the dictionary if no element exists for key
+   * @param key key to associate with value
+   * @param args args to construct TValue in place, to associate with the key
+   * @param pruneHook eviction callback to use INSTEAD OF the configured one
+   * @return a pair consisting of an iterator to the inserted element (or to the
+   *     element that prevented the insertion) and a bool denoting whether the
+   *     insertion took place.
+   */
+  template <typename K, typename... Args>
+  std::pair<iterator, bool> emplaceWithPruneHook(
+      const K& key, Args&&... args, PruneHookCall pruneHook) {
+    return insertImpl<K>(
+        std::make_unique<Node>(
+            std::piecewise_construct, key, std::forward<Args>(args)...),
+        pruneHook);
+  }
+
+  /**
    * Get the number of elements in the dictionary
    * @return the size of the dictionary
    */
@@ -479,10 +513,17 @@ class EvictingCacheMap {
   }
 
  private:
-  struct Node : public boost::intrusive::list_base_hook<
-                    boost::intrusive::link_mode<boost::intrusive::safe_link>> {
+  struct Node
+      : public boost::intrusive::list_base_hook<
+            boost::intrusive::link_mode<boost::intrusive::safe_link>> {
     template <typename K>
     Node(const K& key, TValue&& value) : pr(key, std::move(value)) {}
+
+    template <typename Key, typename... Args>
+    explicit Node(std::piecewise_construct_t, Key&& k, Args&&... args)
+        : pr(std::piecewise_construct,
+             std::forward_as_tuple(std::forward<Key>(k)),
+             std::forward_as_tuple(std::forward<Args>(args)...)) {}
     TPair pr;
   };
   using NodePtr = Node*;
@@ -509,44 +550,60 @@ class EvictingCacheMap {
 
    private:
     void clear_nodes() {
-      boost::intrusive::list<Node>::clear_and_dispose(
-          [](Node* ptr) { delete ptr; });
+      boost::intrusive::list<Node>::clear_and_dispose([](Node* ptr) {
+        delete ptr;
+      });
     }
   };
 
-  struct KeyHasher {
+  struct KeyHasher : THash {
+    static_assert(std::is_nothrow_copy_constructible_v<THash>);
+    template <typename K>
+    static inline constexpr bool nx =
+        is_nothrow_invocable_v<THash const&, K const&>;
+
     using is_transparent = void;
     using folly_is_avalanching = IsAvalanchingHasher<THash, TKey>;
 
-    KeyHasher() : hash() {}
-    explicit KeyHasher(const THash& keyHash) : hash(keyHash) {}
-    std::size_t operator()(const NodePtr& node) const {
-      return hash(node->pr.first);
-    }
+    using THash::THash;
+
+    explicit KeyHasher(THash const& that) noexcept : THash(that) {}
+
     template <typename K>
-    std::size_t operator()(const K& key) const {
-      return hash(key);
+    std::size_t operator()(const K& key) const noexcept(nx<K>) {
+      return THash::operator()(key);
     }
-    THash hash;
+    std::size_t operator()(const NodePtr& node) const noexcept(nx<TKey>) {
+      return THash::operator()(node->pr.first);
+    }
   };
 
-  struct KeyValueEqual {
+  struct KeyValueEqual : private TKeyEqual {
+    static_assert(std::is_nothrow_copy_constructible_v<TKeyEqual>);
+    template <typename L, typename R>
+    static inline constexpr bool nx =
+        is_nothrow_invocable_v<TKeyEqual const&, L const&, R const&>;
+
     using is_transparent = void;
 
-    KeyValueEqual() : equal() {}
-    explicit KeyValueEqual(const TKeyEqual& keyEqual) : equal(keyEqual) {}
+    using TKeyEqual::TKeyEqual;
+
+    explicit KeyValueEqual(TKeyEqual const& that) noexcept : TKeyEqual(that) {}
+
     template <typename K>
-    bool operator()(const K& lhs, const NodePtr& rhs) const {
-      return equal(lhs, rhs->pr.first);
+    bool operator()(const K& lhs, const NodePtr& rhs) const
+        noexcept(nx<K, TKey>) {
+      return TKeyEqual::operator()(lhs, rhs->pr.first);
     }
     template <typename K>
-    bool operator()(const NodePtr& lhs, const K& rhs) const {
-      return equal(lhs->pr.first, rhs);
+    bool operator()(const NodePtr& lhs, const K& rhs) const
+        noexcept(nx<TKey, K>) {
+      return TKeyEqual::operator()(lhs->pr.first, rhs);
     }
-    bool operator()(const NodePtr& lhs, const NodePtr& rhs) const {
-      return equal(lhs->pr.first, rhs->pr.first);
+    bool operator()(const NodePtr& lhs, const NodePtr& rhs) const
+        noexcept(nx<TKey, TKey>) {
+      return TKeyEqual::operator()(lhs->pr.first, rhs->pr.first);
     }
-    TKeyEqual equal;
   };
 
   template <typename K>
@@ -589,8 +646,9 @@ class EvictingCacheMap {
   template <typename Self, typename K>
   static auto findWithoutPromotionImpl(Self& self, const K& key) {
     Node* ptr = self.findInIndex(key);
-    return ptr ? self_iterator_t<Self>(self.lru_.iterator_to(*ptr))
-               : self.end();
+    return ptr
+        ? self_iterator_t<Self>(self.lru_.iterator_to(*ptr))
+        : self.end();
   }
 
   typename NodeList::iterator eraseImpl(
@@ -641,7 +699,12 @@ class EvictingCacheMap {
   template <typename K>
   auto insertImpl(const K& key, TValue&& value, PruneHookCall pruneHook) {
     auto node_owner = std::make_unique<Node>(key, std::move(value));
-    Node* node = node_owner.get();
+    return insertImpl<K>(std::move(node_owner), std::move(pruneHook));
+  }
+
+  template <typename K>
+  auto insertImpl(std::unique_ptr<Node> nodeOwner, PruneHookCall pruneHook) {
+    Node* node = nodeOwner.get();
     {
       auto pair = index_.insert(node);
       if (!pair.second) {
@@ -654,7 +717,7 @@ class EvictingCacheMap {
     }
 
     // Complete insertion
-    lru_.push_front(*node_owner.release());
+    lru_.push_front(*nodeOwner.release());
 
     // no evictions if maxSize_ is 0 i.e. unlimited capacity
     if (maxSize_ > 0 && size() > maxSize_) {

@@ -48,7 +48,9 @@ BENCHMARK(bmFun) {
   fun();
 }
 BENCHMARK(bmRepeatedFun, n) {
-  FOR_EACH_RANGE (i, 0, n) { fun(); }
+  FOR_EACH_RANGE (i, 0, n) {
+    fun();
+  }
 }
 BENCHMARK_DRAW_LINE();
 
@@ -61,7 +63,7 @@ BENCHMARK(gun) {
 BENCHMARK_DRAW_LINE();
 
 BENCHMARK(optimizerCanDiscardTrivial, n) {
-  long x = 0;
+  [[maybe_unused]] long x = 0;
   for (long i = 0; i < n; ++i) {
     for (long j = 0; j < 10000; ++j) {
       x += j;
@@ -158,8 +160,8 @@ class NonTrivialLong {
   }
 
  private:
-  long value_;
-  long otherStuff_[3];
+  [[maybe_unused]] long value_;
+  [[maybe_unused]] long otherStuff_[3];
 };
 } // namespace
 
@@ -251,14 +253,20 @@ BENCHMARK_DRAW_LINE();
 BENCHMARK(baselinevector) {
   vector<int> v;
 
-  BENCHMARK_SUSPEND { v.resize(1000); }
+  BENCHMARK_SUSPEND {
+    v.resize(1000);
+  }
 
-  FOR_EACH_RANGE (i, 0, 100) { v.push_back(42); }
+  FOR_EACH_RANGE (i, 0, 100) {
+    v.push_back(42);
+  }
 }
 
 BENCHMARK_RELATIVE(bmVector) {
   vector<int> v;
-  FOR_EACH_RANGE (i, 0, 100) { v.resize(v.size() + 1, 42); }
+  FOR_EACH_RANGE (i, 0, 100) {
+    v.resize(v.size() + 1, 42);
+  }
 }
 
 BENCHMARK_DRAW_LINE();
@@ -274,7 +282,9 @@ BENCHMARK(noMulti) {
 }
 
 BENCHMARK_MULTI(multiSimple) {
-  FOR_EACH_RANGE (i, 0, 10) { fun(); }
+  FOR_EACH_RANGE (i, 0, 10) {
+    fun();
+  }
   return 10;
 }
 
@@ -296,7 +306,9 @@ BENCHMARK_RELATIVE_MULTI(multiSimpleRelThree) {
 }
 
 BENCHMARK_MULTI(multiIterArgs, iter) {
-  FOR_EACH_RANGE (i, 0, 10 * iter) { fun(); }
+  FOR_EACH_RANGE (i, 0, 10 * iter) {
+    fun();
+  }
   return 10 * iter;
 }
 
@@ -355,15 +367,16 @@ BENCHMARK(BenchmarkSuspender_dismissing_value, iter) {
     shuffle(v.begin(), v.end(), rng);
     auto s = braces.dismissing([&] {
       sort(v.begin(), v.end());
-      return accumulate(
-          v.begin(), v.end(), 0, [](size_t a, size_t e) { return a + e; });
+      return accumulate(v.begin(), v.end(), 0, [](size_t a, size_t e) {
+        return a + e;
+      });
     });
     doNotOptimizeAway(s);
   }
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::addBenchmark("-", std::string("string_name"), [] { return 0; });
   runBenchmarks();
   runBenchmarksOnFlag();

@@ -28,6 +28,7 @@
 #include <boost/random.hpp>
 #include <glog/logging.h>
 
+#include <folly/ConstexprMath.h>
 #include <folly/Memory.h>
 #include <folly/ThreadLocal.h>
 #include <folly/synchronization/MicroSpinLock.h>
@@ -79,9 +80,10 @@ class SkipListNode {
   }
 
   template <typename NodeAlloc>
-  struct DestroyIsNoOp : StrictConjunction<
-                             AllocatorHasTrivialDeallocate<NodeAlloc>,
-                             std::is_trivially_destructible<SkipListNode>> {};
+  struct DestroyIsNoOp
+      : StrictConjunction<
+            AllocatorHasTrivialDeallocate<NodeAlloc>,
+            std::is_trivially_destructible<SkipListNode>> {};
 
   // copy the head node to a new head node assuming lock acquired
   SkipListNode* copyHead(SkipListNode* node) {
@@ -213,9 +215,7 @@ class SkipListRandomHeight {
       p *= kProb;
       sizeLimit *= kProbInv;
       lookupTable_[i] = lookupTable_[i - 1] + p;
-      sizeLimitTable_[i] = sizeLimit > kMaxSizeLimit
-          ? kMaxSizeLimit
-          : static_cast<size_t>(sizeLimit);
+      sizeLimitTable_[i] = folly::constexpr_clamp_cast<size_t>(sizeLimit);
     }
     lookupTable_[kMaxHeight - 1] = 1;
     sizeLimitTable_[kMaxHeight - 1] = kMaxSizeLimit;
@@ -257,7 +257,7 @@ class NodeRecycler<
   }
 
   void add(NodeType* node) {
-    std::lock_guard<MicroSpinLock> g(lock_);
+    std::lock_guard g(lock_);
     if (nodes_.get() == nullptr) {
       nodes_ = std::make_unique<std::vector<NodeType*>>(1, node);
     } else {
@@ -283,7 +283,7 @@ class NodeRecycler<
     {
       // The order at which we lock, add, swap, is very important for
       // correctness.
-      std::lock_guard<MicroSpinLock> g(lock_);
+      std::lock_guard g(lock_);
       ret = refs_.fetch_add(-1, std::memory_order_acq_rel);
       if (ret == 1) {
         // When releasing the last reference, it is safe to remove all the

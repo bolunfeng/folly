@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/JSONSchema.h>
+#include <folly/json/JSONSchema.h>
 #include <folly/json/json.h>
 #include <folly/portability/GTest.h>
 
@@ -200,9 +200,9 @@ TEST(JSONSchemaTest, TestArrayAdditionalItems) {
 }
 
 TEST(JSONSchemaTest, TestArrayNoAdditionalItems) {
-  dynamic schema =
-      dynamic::object("items", dynamic::array(dynamic::object("minimum", 2)))(
-          "additionalItems", false);
+  dynamic schema = dynamic::object(
+      "items", dynamic::array(dynamic::object("minimum", 2)))(
+      "additionalItems", false);
   ASSERT_FALSE(check(schema, dynamic::array(3, 3, 3)));
 }
 

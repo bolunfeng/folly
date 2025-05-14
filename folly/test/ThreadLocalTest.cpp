@@ -39,13 +39,13 @@
 #include <glog/logging.h>
 
 #include <folly/Memory.h>
-#include <folly/experimental/TestUtil.h>
 #include <folly/experimental/io/FsUtil.h>
 #include <folly/lang/Keep.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Unistd.h>
 #include <folly/synchronization/Baton.h>
 #include <folly/system/ThreadId.h>
+#include <folly/testing/TestUtil.h>
 
 using namespace folly;
 
@@ -214,14 +214,14 @@ TEST(ThreadLocalPtr, CustomDeleter2) {
 
       // Notify main thread that we're done
       {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         state = State::DONE;
         cv.notify_all();
       }
 
       // Wait for main thread to allow us to exit
       {
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         while (state != State::EXIT) {
           cv.wait(lock);
         }
@@ -230,7 +230,7 @@ TEST(ThreadLocalPtr, CustomDeleter2) {
 
     // Wait for main thread to start (and set w.get()->val_)
     {
-      std::unique_lock<std::mutex> lock(mutex);
+      std::unique_lock lock(mutex);
       while (state != State::DONE) {
         cv.wait(lock);
       }
@@ -246,7 +246,7 @@ TEST(ThreadLocalPtr, CustomDeleter2) {
 
   // Allow thread to exit
   {
-    std::unique_lock<std::mutex> lock(mutex);
+    std::unique_lock lock(mutex);
     state = State::EXIT;
     cv.notify_all();
   }
@@ -255,13 +255,25 @@ TEST(ThreadLocalPtr, CustomDeleter2) {
   EXPECT_EQ(1010, Widget::totalVal_);
 }
 
+TEST(ThreadLocalPtr, SharedPtr) {
+  ThreadLocalPtr<int> tlp;
+  auto sp = std::make_shared<int>(7);
+  EXPECT_EQ(1, sp.use_count());
+  tlp.reset(sp);
+  EXPECT_EQ(2, sp.use_count());
+  EXPECT_EQ(sp.get(), tlp.get());
+  tlp.reset();
+  EXPECT_EQ(1, sp.use_count());
+  EXPECT_EQ(static_cast<void*>(nullptr), tlp.get());
+}
+
 TEST(ThreadLocal, NotDefaultConstructible) {
   struct Object {
     int value;
     explicit Object(int v) : value{v} {}
   };
   std::atomic<int> a{};
-  ThreadLocal<Object> o{[&a] { return new Object(a++); }};
+  ThreadLocal<Object> o{[&a] { return Object(a++); }};
   EXPECT_EQ(0, o->value);
   std::thread([&] { EXPECT_EQ(1, o->value); }).join();
 }
@@ -301,6 +313,29 @@ TEST(ThreadLocal, BasicDestructor) {
   EXPECT_EQ(10, Widget::totalVal_);
 }
 
+TEST(ThreadLocal, MoveCtorFrom) {
+  int calls = 0;
+  ThreadLocal<int> src{[&] { return ++calls; }};
+  EXPECT_EQ(1, *src);
+  auto dst = static_cast<ThreadLocal<int>&&>(src);
+  EXPECT_THROW(*src, std::bad_function_call);
+  std::thread([&] { EXPECT_THROW(*src, std::bad_function_call); }).join();
+  EXPECT_EQ(1, *dst);
+  std::thread([&] { EXPECT_EQ(2, *dst); }).join();
+}
+
+TEST(ThreadLocal, MoveAssignFrom) {
+  int calls = 0;
+  ThreadLocal<int> src{[&] { return ++calls; }};
+  EXPECT_EQ(1, *src);
+  ThreadLocal<int> dst;
+  dst = static_cast<ThreadLocal<int>&&>(src);
+  EXPECT_THROW(*src, std::bad_function_call);
+  std::thread([&] { EXPECT_THROW(*src, std::bad_function_call); }).join();
+  EXPECT_EQ(1, *dst);
+  std::thread([&] { EXPECT_EQ(2, *dst); }).join();
+}
+
 // this should force a realloc of the ElementWrapper array
 TEST(ThreadLocal, ReallocDestructor) {
   ThreadLocal<MultiWidget> w;
@@ -331,7 +366,7 @@ TEST(ThreadLocal, InterleavedDestructors) {
     int wVersionPrev = 0;
     while (true) {
       while (true) {
-        std::lock_guard<std::mutex> g(lock);
+        std::lock_guard g(lock);
         if (wVersion > wVersionMax) {
           return;
         }
@@ -341,7 +376,7 @@ TEST(ThreadLocal, InterleavedDestructors) {
           break;
         }
       }
-      std::lock_guard<std::mutex> g(lock);
+      std::lock_guard g(lock);
       wVersionPrev = wVersion;
       (*w)->val_ += 10;
       ++thIter;
@@ -350,20 +385,20 @@ TEST(ThreadLocal, InterleavedDestructors) {
   FOR_EACH_RANGE (i, 0, wVersionMax) {
     int thIterPrev = 0;
     {
-      std::lock_guard<std::mutex> g(lock);
+      std::lock_guard g(lock);
       thIterPrev = thIter;
       w = std::make_unique<ThreadLocal<Widget>>();
       ++wVersion;
     }
     while (true) {
-      std::lock_guard<std::mutex> g(lock);
+      std::lock_guard g(lock);
       if (thIter > thIterPrev) {
         break;
       }
     }
   }
   {
-    std::lock_guard<std::mutex> g(lock);
+    std::lock_guard g(lock);
     wVersion = wVersionMax + 1;
   }
   th.join();
@@ -395,19 +430,20 @@ TEST(ThreadLocalPtr, AccessAllThreadsCounter) {
   // thread i will increment all the thread locals
   // in the range 0..i
   for (int i = 0; i < kNumThreads; ++i) {
-    threads.push_back(std::thread([i, // i needs to be captured by value
-                                   &stci,
-                                   &run,
-                                   &totalAtomic]() {
-      for (int j = 0; j <= i; j++) {
-        stci[j].add(1);
-      }
+    threads.push_back(std::thread(
+        [i, // i needs to be captured by value
+         &stci,
+         &run,
+         &totalAtomic]() {
+          for (int j = 0; j <= i; j++) {
+            stci[j].add(1);
+          }
 
-      totalAtomic.fetch_add(1);
-      while (run.load()) {
-        usleep(100);
-      }
-    }));
+          totalAtomic.fetch_add(1);
+          while (run.load()) {
+            usleep(100);
+          }
+        }));
   }
   while (totalAtomic.load() != kNumThreads) {
     usleep(100);
@@ -646,26 +682,28 @@ TEST(ThreadLocal, Fork) {
   std::mutex mutex;
   bool started = false;
   std::condition_variable startedCond;
-  bool stopped = false;
-  std::condition_variable stoppedCond;
+  std::atomic<bool> stopped = false;
 
   std::thread t([&]() {
     EXPECT_EQ(1, ptr->value()); // ensure created
     {
-      std::unique_lock<std::mutex> lock(mutex);
+      std::unique_lock lock(mutex);
       started = true;
       startedCond.notify_all();
     }
     {
-      std::unique_lock<std::mutex> lock(mutex);
       while (!stopped) {
-        stoppedCond.wait(lock);
+        // Keep invoking accessAllThreads which will acquire
+        // the StaticMeta internal locks. The child() after fork should
+        // not deadlock on the locks being inconsistent.
+        EXPECT_EQ(2, totalValue());
+        usleep(100); /* sleep override */
       }
     }
   });
 
   {
-    std::unique_lock<std::mutex> lock(mutex);
+    std::unique_lock lock(mutex);
     while (!started) {
       startedCond.wait(lock);
     }
@@ -699,12 +737,7 @@ TEST(ThreadLocal, Fork) {
 
   EXPECT_EQ(2, totalValue());
 
-  {
-    std::unique_lock<std::mutex> lock(mutex);
-    stopped = true;
-    stoppedCond.notify_all();
-  }
-
+  stopped = true;
   t.join();
 
   EXPECT_EQ(1, totalValue());

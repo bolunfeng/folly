@@ -342,19 +342,18 @@ class ConcurrentHashMap {
   template <typename... Args>
   std::pair<ConstIterator, bool> emplace(Args&&... args) {
     using Node = typename SegmentT::Node;
-    auto node = (Node*)Allocator().allocate(sizeof(Node));
-    new (node) Node(ensureCohort(), std::forward<Args>(args)...);
-    auto h = HashFn{}(node->getItem().first);
+    detail::concurrenthashmap::AllocNodeGuard<Node, Allocator> g(
+        Allocator(), ensureCohort(), std::forward<Args>(args)...);
+    auto h = HashFn{}(g.node->getItem().first);
     auto segment = pickSegment(h);
     std::pair<ConstIterator, bool> res(
         std::piecewise_construct,
         std::forward_as_tuple(this, segment),
         std::forward_as_tuple(false));
     res.second = ensureSegment(segment)->emplace(
-        res.first.it_, h, node->getItem().first, node);
-    if (!res.second) {
-      node->~Node();
-      Allocator().deallocate((uint8_t*)node, sizeof(Node));
+        res.first.it_, h, g.node->getItem().first, g.node);
+    if (res.second) {
+      g.dismiss();
     }
     return res;
   }
@@ -374,6 +373,31 @@ class ConcurrentHashMap {
         std::forward_as_tuple(false));
     res.second = ensureSegment(segment)->insert_or_assign(
         res.first.it_, h, std::forward<Key>(k), std::forward<Value>(v));
+    return res;
+  }
+
+  /*
+   * Insert desired if the key doesn't exist, or assign to desired if the
+   * predicate returns true for the current value. The bool component will
+   * always be true if the map has been updated via either insertion or
+   * assignment. Note that this is different from the std::map::insert_or_assign
+   * interface.
+   */
+  template <typename Key, typename Value, typename Predicate>
+  std::pair<ConstIterator, bool> insert_or_assign_if(
+      Key&& k, Value&& desired, Predicate&& predicate) {
+    auto h = HashFn{}(k);
+    auto segment = pickSegment(h);
+    std::pair<ConstIterator, bool> res(
+        std::piecewise_construct,
+        std::forward_as_tuple(this, segment),
+        std::forward_as_tuple(false));
+    res.second = ensureSegment(segment)->insert_or_assign_if(
+        res.first.it_,
+        h,
+        std::forward<Key>(k),
+        std::forward<Value>(desired),
+        std::forward<Predicate>(predicate));
     return res;
   }
 
@@ -489,14 +513,16 @@ class ConcurrentHashMap {
 
   // Erase if and only if key k is equal to expected
   size_type erase_if_equal(const key_type& k, const ValueType& expected) {
-    return erase_key_if(
-        k, [&expected](const ValueType& v) { return v == expected; });
+    return erase_key_if(k, [&expected](const ValueType& v) {
+      return v == expected;
+    });
   }
 
   template <typename K, EnableHeterogeneousErase<K, int> = 0>
   size_type erase_if_equal(const K& k, const ValueType& expected) {
-    return erase_key_if(
-        k, [&expected](const ValueType& v) { return v == expected; });
+    return erase_key_if(k, [&expected](const ValueType& v) {
+      return v == expected;
+    });
   }
 
   // Erase if predicate evaluates to true on the existing value
@@ -811,7 +837,7 @@ using ConcurrentHashMapSIMD = ConcurrentHashMap<
     ShardBits,
     Atom,
     Mutex,
-#if FOLLY_SSE_PREREQ(4, 2) && !FOLLY_MOBILE
+#if FOLLY_SSE_PREREQ(4, 2) && FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
     detail::concurrenthashmap::simd::SIMDTable
 #else
     // fallback to regular impl

@@ -35,9 +35,10 @@ namespace folly {
 ///
 /// NB No attempt has been made to make anything other than add and schedule
 /// threadsafe.
-class ManualExecutor : public DrivableExecutor,
-                       public ScheduledExecutor,
-                       public SequencedExecutor {
+class ManualExecutor
+    : public DrivableExecutor,
+      public ScheduledExecutor,
+      public SequencedExecutor {
  public:
   ~ManualExecutor() override;
 
@@ -92,7 +93,7 @@ class ManualExecutor : public DrivableExecutor,
   }
 
   void scheduleAt(Func&& f, TimePoint const& t) override {
-    std::lock_guard<std::mutex> lock(lock_);
+    std::lock_guard lock(lock_);
     scheduledFuncs_.emplace(t, std::move(f));
     sem_.post();
   }
@@ -116,7 +117,7 @@ class ManualExecutor : public DrivableExecutor,
     std::priority_queue<ScheduledFunc> scheduled_funcs;
 
     {
-      std::lock_guard<std::mutex> lock(lock_);
+      std::lock_guard lock(lock_);
       funcs_.swap(funcs);
       scheduledFuncs_.swap(scheduled_funcs);
     }

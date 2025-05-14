@@ -48,30 +48,37 @@ class IOBufQueue {
    * to in data_ (e.g. appending to it).
    *
    * It flushes the writable tail cache and refills it on destruction.
+   *
+   * If while the guard is held new IOBufs are appended to the chain,
+   * allowTailReuse allows forking the old tail IOBuf so we can reuse its
+   * writable tail.
    */
-  auto updateGuard() {
+  auto updateGuard(bool allowTailReuse = false) {
     flushCache();
-    return folly::makeGuard([this] { updateWritableTailCache(); });
+    folly::IOBuf* oldTail =
+        (allowTailReuse && head_ != nullptr) ? head_->prev() : nullptr;
+    return folly::makeGuard([this, oldTail] {
+      if (oldTail != nullptr) {
+        maybeReuseTail(*oldTail);
+      }
+      updateWritableTailCache();
+    });
   }
 
   struct WritableRangeCacheData {
-    std::pair<uint8_t*, uint8_t*> cachedRange;
-    bool attached{false};
+    std::pair<uint8_t*, uint8_t*> cachedRange{};
+    bool attached{};
 
     WritableRangeCacheData() = default;
 
-    WritableRangeCacheData(WritableRangeCacheData&& other)
+    WritableRangeCacheData(WritableRangeCacheData&& other) noexcept
         : cachedRange(other.cachedRange), attached(other.attached) {
-      other.cachedRange = {nullptr, nullptr};
-      other.attached = false;
+      other.cachedRange = std::pair<uint8_t*, uint8_t*>{};
+      other.attached = {};
     }
-    WritableRangeCacheData& operator=(WritableRangeCacheData&& other) {
-      cachedRange = other.cachedRange;
-      attached = other.attached;
-
-      other.cachedRange = {nullptr, nullptr};
-      other.attached = false;
-
+    WritableRangeCacheData& operator=(WritableRangeCacheData&& other) noexcept {
+      cachedRange = std::exchange(other.cachedRange, {});
+      attached = std::exchange(other.attached, {});
       return *this;
     }
 
@@ -122,7 +129,7 @@ class IOBufQueue {
      * Move constructor/assignment can move the cached range, but must update
      * the reference in IOBufQueue.
      */
-    WritableRangeCache(WritableRangeCache&& other)
+    WritableRangeCache(WritableRangeCache&& other) noexcept
         : data_(std::move(other.data_)), queue_(other.queue_) {
       if (data_.attached) {
         queue_->updateCacheRef(data_);
@@ -199,7 +206,7 @@ class IOBufQueue {
      *
      * Note: doesn't populate cache.
      */
-    size_t length() {
+    size_t length() const {
       dcheckIntegrity();
       return data_.cachedRange.second - data_.cachedRange.first;
     }
@@ -207,7 +214,7 @@ class IOBufQueue {
     /**
      * Mark n bytes as occupied (e.g. postallocate).
      */
-    void append(size_t n) {
+    void append(size_t n) noexcept {
       dcheckIntegrity();
       // This can happen only if somebody is misusing the interface.
       // E.g. calling append after touching IOBufQueue or without checking
@@ -238,7 +245,7 @@ class IOBufQueue {
 
     FOLLY_NOINLINE void appendSlow(size_t n) { queue_->postallocate(n); }
 
-    void dcheckIntegrity() {
+    void dcheckIntegrity() const {
       // Tail start should always be less than tail end.
       DCHECK_LE(
           (void*)data_.cachedRange.first, (void*)data_.cachedRange.second);
@@ -308,8 +315,13 @@ class IOBufQueue {
    * releasing the buffers), if possible.  If pack is false, we leave
    * the chain topology unchanged.
    *
-   * If allowTailReuse is true, the current writable tail is reappended at the
-   * end of the chain when possible and beneficial.
+   * If allowTailReuse is true, the current tail is split and reappended at the
+   * end of the chain when possible and beneficial. This can reduce memory
+   * overhead when append() is interleaved with other writes: without this
+   * option, appending a new buffer strands the previous tail, even if there is
+   * room left. It is preferable to enable this only if the whole chain is
+   * likely to share the lifetime, since the split tail buffers hold the entire
+   * allocation of the buffer they were split from.
    */
   void append(
       std::unique_ptr<folly::IOBuf>&& buf,
@@ -317,6 +329,8 @@ class IOBufQueue {
       bool allowTailReuse = false);
   void append(
       const folly::IOBuf& buf, bool pack = false, bool allowTailReuse = false);
+  void append(
+      folly::IOBuf&& buf, bool pack = false, bool allowTailReuse = false);
 
   /**
    * Add a queue to the end of this queue. `this` takes ownership of
@@ -408,7 +422,7 @@ class IOBufQueue {
    *       invoke any other non-const methods on this IOBufQueue between
    *       the call to preallocate and the call to postallocate().
    */
-  void postallocate(std::size_t n) {
+  void postallocate(std::size_t n) noexcept {
     dcheckCacheIntegrity();
     DCHECK_LE(
         (void*)(cachePtr_->cachedRange.first + n),
@@ -434,7 +448,7 @@ class IOBufQueue {
    * @brief Get a pointer to the writable tail section.
    * @methodset Access
    */
-  void* writableTail() const {
+  void* writableTail() {
     dcheckCacheIntegrity();
     return cachePtr_->cachedRange.first;
   }
@@ -614,7 +628,7 @@ class IOBufQueue {
 
   /** Movable */
   IOBufQueue(IOBufQueue&&) noexcept;
-  IOBufQueue& operator=(IOBufQueue&&);
+  IOBufQueue& operator=(IOBufQueue&&) noexcept;
 
   static constexpr size_t kMaxPackCopy = 4096;
 
@@ -643,13 +657,7 @@ class IOBufQueue {
   WritableRangeCacheData* cachePtr_{nullptr};
   WritableRangeCacheData localCache_;
 
-  // Non-null only if points to the current tail buffer, and that buffer was
-  // originally created by this IOBufQueue, so it can be safely
-  // reused. Initially set by preallocateSlow() and updated by maybeReuseTail()
-  // or invalidated by updateGuard().
-  folly::IOBuf* reusableTail_ = nullptr;
-
-  void dcheckCacheIntegrity() const {
+  void dcheckCacheIntegrity() const noexcept {
     // Tail start should always be less than tail end.
     DCHECK_LE((void*)tailStart_, (void*)cachePtr_->cachedRange.first);
     DCHECK_LE(
@@ -672,18 +680,12 @@ class IOBufQueue {
           cachePtr_->cachedRange.second ==
           head_->prev()->writableTail() + head_->prev()->tailroom());
     }
-
-    // If reusableTail_ is not null it should point to the current tail buffer.
-    if (reusableTail_ != nullptr) {
-      DCHECK(head_ != nullptr);
-      DCHECK(reusableTail_ == head_->prev());
-    }
   }
 
   /**
    * Populate dest with writable tail range cache.
    */
-  void fillWritableRangeCache(WritableRangeCacheData& dest) {
+  void fillWritableRangeCache(WritableRangeCacheData& dest) noexcept {
     dcheckCacheIntegrity();
     if (cachePtr_ != &dest) {
       dest = std::move(*cachePtr_);
@@ -694,7 +696,7 @@ class IOBufQueue {
   /**
    * Clear current writable tail cache and reset it to localCache_
    */
-  void clearWritableRangeCache() {
+  void clearWritableRangeCache() noexcept {
     flushCache();
 
     if (cachePtr_ != &localCache_) {
@@ -708,7 +710,7 @@ class IOBufQueue {
   /**
    * Commit any pending changes to the tail of the queue.
    */
-  void flushCache() const {
+  void flushCache() const noexcept {
     dcheckCacheIntegrity();
 
     if (tailStart_ != cachePtr_->cachedRange.first) {
@@ -724,16 +726,14 @@ class IOBufQueue {
   }
 
   // For WritableRangeCache move assignment/construction.
-  void updateCacheRef(WritableRangeCacheData& newRef) { cachePtr_ = &newRef; }
+  void updateCacheRef(WritableRangeCacheData& newRef) noexcept {
+    cachePtr_ = &newRef;
+  }
 
   /**
    * Update cached writable tail range. Called by updateGuard()
    */
-  void updateWritableTailCache() {
-    if (head_ == nullptr || reusableTail_ != head_->prev()) {
-      reusableTail_ = nullptr;
-    }
-
+  void updateWritableTailCache() noexcept {
     if (FOLLY_LIKELY(head_ != nullptr)) {
       IOBuf* buf = head_->prev();
       if (FOLLY_LIKELY(!buf->isSharedOne())) {
@@ -750,7 +750,7 @@ class IOBufQueue {
   std::pair<void*, std::size_t> preallocateSlow(
       std::size_t min, std::size_t newAllocationSize, std::size_t max);
 
-  void maybeReuseTail();
+  void maybeReuseTail(folly::IOBuf& oldTail);
 };
 
 } // namespace folly

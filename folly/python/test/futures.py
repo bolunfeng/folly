@@ -17,7 +17,8 @@ import asyncio
 import unittest
 from sys import platform
 
-from . import simplebridge
+# pyre-fixme[21]: Could not find name `simplebridge` in `folly.python.test`.
+from folly.python.test import simplebridge
 
 
 class Futures(unittest.TestCase):

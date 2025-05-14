@@ -26,11 +26,11 @@
 #include <folly/compression/Utils.h>
 #include <folly/io/Cursor.h>
 
-using folly::io::compression::detail::dataStartsWithLE;
-using folly::io::compression::detail::prefixToStringLE;
+using folly::compression::detail::dataStartsWithLE;
+using folly::compression::detail::prefixToStringLE;
 
 namespace folly {
-namespace io {
+namespace compression {
 namespace zlib {
 
 namespace {
@@ -161,7 +161,7 @@ bool ZlibStreamCodec::canUncompress(
     const IOBuf* data, Optional<uint64_t>) const {
   if (type() == CodecType::ZLIB) {
     uint16_t value;
-    Cursor cursor{data};
+    io::Cursor cursor{data};
     if (!cursor.tryReadBE(value)) {
       return false;
     }
@@ -269,8 +269,9 @@ void ZlibStreamCodec::resetDeflateStream() {
   // The automatic header detection format is only for inflation.
   // Use zlib for deflation if the format is auto.
   int const windowBits = getWindowBits(
-      options_.format == Options::Format::AUTO ? Options::Format::ZLIB
-                                               : options_.format,
+      options_.format == Options::Format::AUTO
+          ? Options::Format::ZLIB
+          : options_.format,
       options_.windowSize);
 
   int const rc = deflateInit2(
@@ -334,59 +335,81 @@ int zlibThrowOnError(int rc) {
 
 bool ZlibStreamCodec::doCompressStream(
     ByteRange& input, MutableByteRange& output, StreamCodec::FlushOp flush) {
-  if (needReset_) {
-    resetDeflateStream();
-    needReset_ = false;
-  }
-  DCHECK(deflateStream_.has_value());
-  // zlib will return Z_STREAM_ERROR if output.data() is null.
-  if (output.data() == nullptr) {
-    return false;
-  }
-  deflateStream_->next_in = const_cast<uint8_t*>(input.data());
-  deflateStream_->avail_in = input.size();
-  deflateStream_->next_out = output.data();
-  deflateStream_->avail_out = output.size();
-  SCOPE_EXIT {
-    input.uncheckedAdvance(input.size() - deflateStream_->avail_in);
-    output.uncheckedAdvance(output.size() - deflateStream_->avail_out);
-  };
-  int const rc = zlibThrowOnError(
-      deflate(deflateStream_.get_pointer(), zlibTranslateFlush(flush)));
-  switch (flush) {
-    case StreamCodec::FlushOp::NONE:
-      return false;
-    case StreamCodec::FlushOp::FLUSH:
-      return deflateStream_->avail_in == 0 && deflateStream_->avail_out != 0;
-    case StreamCodec::FlushOp::END:
-      return rc == Z_STREAM_END;
-    default:
-      throw std::invalid_argument("ZlibStreamCodec: Invalid flush");
-  }
+  // Zlib uses uint32_t for sizes, so we can't compress more than 4GB at a time
+  return detail::chunkedStream(
+      detail::kDefaultChunkSizeFor32BitSizes,
+      input,
+      output,
+      flush,
+      [this](auto& input, auto& output, auto flush) {
+        if (needReset_) {
+          resetDeflateStream();
+          needReset_ = false;
+        }
+        DCHECK(deflateStream_.has_value());
+        // zlib will return Z_STREAM_ERROR if output.data() is null.
+        if (output.data() == nullptr) {
+          return false;
+        }
+        deflateStream_->next_in = const_cast<uint8_t*>(input.data());
+        deflateStream_->avail_in = to_narrow(input.size());
+        deflateStream_->next_out = output.data();
+        deflateStream_->avail_out = to_narrow(output.size());
+        DCHECK_EQ(deflateStream_->avail_in, input.size());
+        DCHECK_EQ(deflateStream_->avail_out, output.size());
+        SCOPE_EXIT {
+          input.uncheckedAdvance(input.size() - deflateStream_->avail_in);
+          output.uncheckedAdvance(output.size() - deflateStream_->avail_out);
+        };
+        int const rc = zlibThrowOnError(
+            deflate(deflateStream_.get_pointer(), zlibTranslateFlush(flush)));
+        switch (flush) {
+          case StreamCodec::FlushOp::NONE:
+            return false;
+          case StreamCodec::FlushOp::FLUSH:
+            return deflateStream_->avail_in == 0 &&
+                deflateStream_->avail_out != 0;
+          case StreamCodec::FlushOp::END:
+            return rc == Z_STREAM_END;
+          default:
+            throw std::invalid_argument("ZlibStreamCodec: Invalid flush");
+        }
+      });
 }
 
 bool ZlibStreamCodec::doUncompressStream(
     ByteRange& input, MutableByteRange& output, StreamCodec::FlushOp flush) {
-  if (needReset_) {
-    resetInflateStream();
-    needReset_ = false;
-  }
-  DCHECK(inflateStream_.has_value());
-  // zlib will return Z_STREAM_ERROR if output.data() is null.
-  if (output.data() == nullptr) {
-    return false;
-  }
-  inflateStream_->next_in = const_cast<uint8_t*>(input.data());
-  inflateStream_->avail_in = input.size();
-  inflateStream_->next_out = output.data();
-  inflateStream_->avail_out = output.size();
-  SCOPE_EXIT {
-    input.advance(input.size() - inflateStream_->avail_in);
-    output.advance(output.size() - inflateStream_->avail_out);
-  };
-  int const rc = zlibThrowOnError(
-      inflate(inflateStream_.get_pointer(), zlibTranslateFlush(flush)));
-  return rc == Z_STREAM_END;
+  // Zlib uses uint32_t for sizes, so we can't uncompress more than 4GB at a
+  // time.
+  return detail::chunkedStream(
+      detail::kDefaultChunkSizeFor32BitSizes,
+      input,
+      output,
+      flush,
+      [this](auto& input, auto& output, auto flush) {
+        if (needReset_) {
+          resetInflateStream();
+          needReset_ = false;
+        }
+        DCHECK(inflateStream_.has_value());
+        // zlib will return Z_STREAM_ERROR if output.data() is null.
+        if (output.data() == nullptr) {
+          return false;
+        }
+        inflateStream_->next_in = const_cast<uint8_t*>(input.data());
+        inflateStream_->avail_in = to_narrow(input.size());
+        inflateStream_->next_out = output.data();
+        inflateStream_->avail_out = to_narrow(output.size());
+        DCHECK_EQ(inflateStream_->avail_in, input.size());
+        DCHECK_EQ(inflateStream_->avail_out, output.size());
+        SCOPE_EXIT {
+          input.advance(input.size() - inflateStream_->avail_in);
+          output.advance(output.size() - inflateStream_->avail_out);
+        };
+        int const rc = zlibThrowOnError(
+            inflate(inflateStream_.get_pointer(), zlibTranslateFlush(flush)));
+        return rc == Z_STREAM_END;
+      });
 }
 
 } // namespace
@@ -408,7 +431,7 @@ std::unique_ptr<StreamCodec> getStreamCodec(Options options, int level) {
 }
 
 } // namespace zlib
-} // namespace io
+} // namespace compression
 } // namespace folly
 
 #endif // FOLLY_HAVE_LIBZ

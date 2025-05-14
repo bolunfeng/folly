@@ -46,7 +46,10 @@ FOLLY_GFLAGS_DEFINE_bool(benchmark, false, "Run benchmarks.");
 
 FOLLY_GFLAGS_DEFINE_bool(json, false, "Output in JSON format.");
 
-FOLLY_GFLAGS_DEFINE_bool(bm_estimate_time, false, "Estimate running time");
+FOLLY_GFLAGS_DEFINE_bool(
+    bm_estimate_time,
+    false,
+    "Estimate running time by returning the geometric mean of latency values between p25 and p75.");
 
 #if FOLLY_PERF_IS_SUPPORTED
 FOLLY_GFLAGS_DEFINE_string(
@@ -84,6 +87,11 @@ FOLLY_GFLAGS_DEFINE_string(
 FOLLY_GFLAGS_DEFINE_string(
     bm_regex, "", "Only benchmarks whose names match this regex will be run.");
 
+FOLLY_GFLAGS_DEFINE_string(
+    bm_file_regex,
+    "",
+    "Only benchmarks whose filenames match this regex will be run.");
+
 FOLLY_GFLAGS_DEFINE_int64(
     bm_min_usec,
     100,
@@ -108,6 +116,11 @@ FOLLY_GFLAGS_DEFINE_uint32(
     1000,
     "Maximum number of trials (iterations) executed for each benchmark.");
 
+FOLLY_GFLAGS_DEFINE_bool(
+    bm_list,
+    false,
+    "Print out list of all benchmark test names without running them.");
+
 namespace folly {
 namespace detail {
 
@@ -121,10 +134,15 @@ BenchmarkingState<std::chrono::high_resolution_clock>& globalBenchmarkState() {
 using BenchmarkFun = std::function<detail::TimeIterData(unsigned int)>;
 
 #define FB_FOLLY_GLOBAL_BENCHMARK_BASELINE fbFollyGlobalBenchmarkBaseline
+#define FB_FOLLY_GLOBAL_BENCHMARK_SUSPENDER_BASELINE \
+  fbFollyGlobalBenchmarkSuspenderBaseline
 #define FB_STRINGIZE_X2(x) FOLLY_PP_STRINGIZE(x)
 
 constexpr const char kGlobalBenchmarkBaseline[] =
     FB_STRINGIZE_X2(FB_FOLLY_GLOBAL_BENCHMARK_BASELINE);
+
+constexpr const char kGlobalBenchmarkSuspenderBaseline[] =
+    FB_STRINGIZE_X2(FB_FOLLY_GLOBAL_BENCHMARK_SUSPENDER_BASELINE);
 
 // Add the global baseline
 BENCHMARK(FB_FOLLY_GLOBAL_BENCHMARK_BASELINE) {
@@ -133,6 +151,11 @@ BENCHMARK(FB_FOLLY_GLOBAL_BENCHMARK_BASELINE) {
 #else
   asm volatile("");
 #endif
+}
+
+// Add the suspender overhead baseline
+BENCHMARK(FB_FOLLY_GLOBAL_BENCHMARK_SUSPENDER_BASELINE) {
+  BENCHMARK_SUSPEND {}
 }
 
 #undef FB_STRINGIZE_X2
@@ -243,11 +266,11 @@ static std::pair<double, UserCounters> runBenchmarkGetNSPerIterationEstimate(
   size_t actualTrials = 0;
   const unsigned int estimateCount = to_integral(max(1.0, 5e+7 / estPerIter));
   std::vector<TrialResultType> trialResults(FLAGS_bm_max_trials);
-  const auto maxRunTime = seconds(5);
+  const auto maxRunTime = seconds(max(5, FLAGS_bm_max_secs));
   auto globalStart = high_resolution_clock::now();
 
   // Run benchmark up to trial times with at least 0.5 sec each
-  // Or until we run out of alowed time (5sec)
+  // Or until we run out of allowed time (max(5, FLAGS_bm_max_secs))
   for (size_t tryId = 0; tryId < FLAGS_bm_max_trials; tryId++) {
     detail::TimeIterData timeIterData = fun(estimateCount);
     auto nsecs = duration_cast<nanoseconds>(timeIterData.duration);
@@ -405,7 +428,7 @@ void printDefaultHeaderContents(std::string_view file, size_t columns) {
   } else {
     std::string truncatedFile = std::string(file.begin(), file.end());
     constexpr std::string_view overflowFilePrefix = "[...]";
-    const int overflow = truncatedFile.size() - maxFileNameChars;
+    const auto overflow = truncatedFile.size() - maxFileNameChars;
     truncatedFile.erase(0, overflow);
     truncatedFile.replace(0, overflowFilePrefix.size(), overflowFilePrefix);
     printHeaderContents(truncatedFile);
@@ -451,7 +474,14 @@ class BenchmarkResultsPrinter {
 
       string s = datum.name;
       if (s == "-") {
+        // Simply draw a line across the benchmark results
         separator('-');
+        continue;
+      }
+      if (s[0] == '"') {
+        // Simply print some text. Strips implied quote characters
+        // from the beginning and end of the name.
+        printf("%s\n", s.substr(1, s.length() - 2).c_str());
         continue;
       }
       bool useBaseline = false;
@@ -655,6 +685,7 @@ namespace {
 
 struct BenchmarksToRun {
   const detail::BenchmarkRegistration* baseline = nullptr;
+  const detail::BenchmarkRegistration* suspenderBaseline = nullptr;
   std::vector<const detail::BenchmarkRegistration*> benchmarks;
   std::vector<size_t> separatorsAfter;
 };
@@ -675,11 +706,16 @@ BenchmarksToRun selectBenchmarksToRun(
   BenchmarksToRun res;
 
   folly::Optional<boost::regex> bmRegex;
+  folly::Optional<boost::regex> bmFileRegex;
 
   res.benchmarks.reserve(benchmarks.size());
 
   if (!FLAGS_bm_regex.empty()) {
     bmRegex.emplace(FLAGS_bm_regex);
+  }
+
+  if (!FLAGS_bm_file_regex.empty()) {
+    bmFileRegex.emplace(FLAGS_bm_file_regex);
   }
 
   for (auto& bm : benchmarks) {
@@ -693,7 +729,16 @@ BenchmarksToRun selectBenchmarksToRun(
       continue;
     }
 
-    if (!bmRegex || boost::regex_search(bm.name, *bmRegex)) {
+    if (bm.name == kGlobalBenchmarkSuspenderBaseline) {
+      res.suspenderBaseline = &bm;
+      continue;
+    }
+
+    bool matchedName = !bmRegex || boost::regex_search(bm.name, *bmRegex);
+    bool matchedFile =
+        !bmFileRegex || boost::regex_search(bm.file, *bmFileRegex);
+
+    if (matchedName && matchedFile) {
       res.benchmarks.push_back(&bm);
     }
   }
@@ -758,6 +803,13 @@ runBenchmarksWithPrinterImpl(
 
   auto const globalBaseline =
       runBenchmarkGetNSPerIteration(toRun.baseline->func, 0);
+
+  auto const globalSuspenderBaseline =
+      runBenchmarkGetNSPerIteration(toRun.suspenderBaseline->func, 0);
+
+  BenchmarkSuspender::suspenderOverhead =
+      chrono::nanoseconds(static_cast<chrono::high_resolution_clock::rep>(
+          globalSuspenderBaseline.first));
 
   std::set<std::string> counterNames;
   ShouldDrawLineTracker shouldDrawLineTracker(toRun);
@@ -833,24 +885,41 @@ bool operator==(const BenchmarkResult& x, const BenchmarkResult& y) {
 }
 
 std::chrono::high_resolution_clock::duration BenchmarkSuspenderBase::timeSpent;
+std::chrono::high_resolution_clock::duration
+    BenchmarkSuspenderBase::suspenderOverhead;
 
 void BenchmarkingStateBase::addBenchmarkImpl(
     const char* file, StringPiece name, BenchmarkFun fun, bool useCounter) {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::lock_guard guard(mutex_);
   benchmarks_.push_back({file, name.str(), std::move(fun), useCounter});
 }
 
 bool BenchmarkingStateBase::useCounters() const {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::lock_guard guard(mutex_);
   return std::any_of(
       benchmarks_.begin(), benchmarks_.end(), [](const auto& bm) {
         return bm.useCounter;
       });
 }
 
+std::vector<std::string> BenchmarkingStateBase::getBenchmarkList() {
+  std::vector<std::string> bmNames;
+  auto toRun = selectBenchmarksToRun(benchmarks_);
+  for (auto benchmarkRegistration : toRun.benchmarks) {
+    bmNames.push_back(benchmarkRegistration->name);
+  }
+
+  return bmNames;
+}
+
 // static
 folly::StringPiece BenchmarkingStateBase::getGlobalBaselineNameForTests() {
   return kGlobalBenchmarkBaseline;
+}
+
+folly::StringPiece
+BenchmarkingStateBase::getGlobalSuspenderBaselineNameForTests() {
+  return kGlobalBenchmarkSuspenderBaseline;
 }
 
 PerfScoped BenchmarkingStateBase::doSetUpPerfScoped(
@@ -872,7 +941,7 @@ PerfScoped BenchmarkingStateBase::setUpPerfScoped() const {
 template <typename Printer>
 std::pair<std::set<std::string>, std::vector<BenchmarkResult>>
 BenchmarkingStateBase::runBenchmarksWithPrinter(Printer* printer) const {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::lock_guard guard(mutex_);
   BenchmarksToRun toRun = selectBenchmarksToRun(benchmarks_);
   maybeRunWarmUpIteration(toRun);
 
@@ -894,14 +963,28 @@ std::vector<BenchmarkResult> runBenchmarksWithResults() {
 } // namespace detail
 
 void runBenchmarks() {
+  auto& state = detail::globalBenchmarkState();
+
+  if (FLAGS_bm_list) {
+    auto bmNames = state.getBenchmarkList();
+    for (auto testName : bmNames) {
+      std::cout << testName << std::endl;
+    }
+    return;
+  }
+
   if (FLAGS_bm_profile) {
     printf(
         "WARNING: Running with constant number of iterations. Results might be jittery.\n");
   }
 
-  checkRunMode();
+  if (FLAGS_bm_min_iters >= FLAGS_bm_max_iters) {
+    std::cerr << "WARNING: bm_min_iters > bm_max_iters; increasing the max"
+              << std::endl;
+    FLAGS_bm_max_iters = FLAGS_bm_min_iters + 1;
+  }
 
-  auto& state = detail::globalBenchmarkState();
+  checkRunMode();
 
   BenchmarkResultsPrinter printer;
   bool useCounter = state.useCounters();

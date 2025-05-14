@@ -111,18 +111,19 @@ constexpr ordering compare_(
     std::size_t right_size) noexcept {
   return left_pos == left_size
       ? (right_pos == right_size ? ordering::eq : ordering::lt)
-      : (right_pos == right_size ? ordering::gt
-                                 : (left[left_pos] < right[right_pos]
-                                        ? ordering::lt
-                                        : (left[left_pos] > right[right_pos]
-                                               ? ordering::gt
-                                               : fixedstring::compare_(
-                                                     left,
-                                                     left_pos + 1u,
-                                                     left_size,
-                                                     right,
-                                                     right_pos + 1u,
-                                                     right_size))));
+      : (right_pos == right_size
+             ? ordering::gt
+             : (left[left_pos] < right[right_pos]
+                    ? ordering::lt
+                    : (left[left_pos] > right[right_pos]
+                           ? ordering::gt
+                           : fixedstring::compare_(
+                                 left,
+                                 left_pos + 1u,
+                                 left_size,
+                                 right,
+                                 right_pos + 1u,
+                                 right_size))));
 }
 
 template <class Left, class Right>
@@ -142,9 +143,10 @@ constexpr Char char_at_(
     const Right& right,
     std::size_t right_count,
     std::size_t i) noexcept {
-  return i < left_count                ? left[i]
-      : i < (left_count + right_count) ? right[i - left_count]
-                                       : Char(0);
+  return i < left_count ? left[i]
+      : i < (left_count + right_count)
+      ? right[i - left_count]
+      : Char(0);
 }
 
 template <class Char, class Left, class Right>
@@ -163,10 +165,11 @@ constexpr Char char_at_(
 #endif
   return i < left_pos
       ? left[i]
-      : (i < right_count + left_pos ? right[i - left_pos + right_pos]
-                                    : (i < left_size - left_count + right_count
-                                           ? left[i - right_count + left_count]
-                                           : Char(0)));
+      : (i < right_count + left_pos
+             ? right[i - left_pos + right_pos]
+             : (i < left_size - left_count + right_count
+                    ? left[i - right_count + left_count]
+                    : Char(0)));
   FOLLY_POP_WARNING
 }
 
@@ -208,8 +211,9 @@ constexpr std::size_t rfind_(
     std::size_t pos,
     std::size_t count) noexcept {
   return find_at_(left, right, pos, count) ? pos
-      : 0u == pos                          ? FixedStringBase::npos
-                  : rfind_(left, right, pos - 1u, count);
+      : 0u == pos
+      ? FixedStringBase::npos
+      : rfind_(left, right, pos - 1u, count);
 }
 
 template <class Left, class Right>
@@ -245,8 +249,9 @@ constexpr std::size_t find_last_of_(
     std::size_t pos,
     std::size_t count) noexcept {
   return find_one_of_at_(left[pos], right, count) ? pos
-      : 0u == pos                                 ? FixedStringBase::npos
-                  : find_last_of_(left, right, pos - 1u, count);
+      : 0u == pos
+      ? FixedStringBase::npos
+      : find_last_of_(left, right, pos - 1u, count);
 }
 
 template <class Left, class Right>
@@ -256,8 +261,9 @@ constexpr std::size_t find_last_not_of_(
     std::size_t pos,
     std::size_t count) noexcept {
   return !find_one_of_at_(left[pos], right, count) ? pos
-      : 0u == pos                                  ? FixedStringBase::npos
-                  : find_last_not_of_(left, right, pos - 1u, count);
+      : 0u == pos
+      ? FixedStringBase::npos
+      : find_last_not_of_(left, right, pos - 1u, count);
 }
 
 struct Helper {
@@ -1040,20 +1046,22 @@ class BasicFixedString : private detail::fixedstring::FixedStringBase {
    * \throw std::out_of_range when i > size()
    */
   constexpr Char& at(std::size_t i) noexcept(false) {
-    return i <= size_ ? data_[i]
-                      : (throw_exception<std::out_of_range>(
-                             "Out of range in BasicFixedString::at"),
-                         data_[size_]);
+    return i <= size_
+        ? data_[i]
+        : (throw_exception<std::out_of_range>(
+               "Out of range in BasicFixedString::at"),
+           data_[size_]);
   }
 
   /**
    * \overload
    */
   constexpr const Char& at(std::size_t i) const noexcept(false) {
-    return i <= size_ ? data_[i]
-                      : (throw_exception<std::out_of_range>(
-                             "Out of range in BasicFixedString::at"),
-                         data_[size_]);
+    return i <= size_
+        ? data_[i]
+        : (throw_exception<std::out_of_range>(
+               "Out of range in BasicFixedString::at"),
+           data_[size_]);
   }
 
   /**
@@ -2900,7 +2908,7 @@ constexpr const std::size_t& npos = detail::fixedstring::FixedStringBase::npos;
  *   `FixedString<8>`, `FixedString<16>`, etc.
  */
 template <class Char, Char... Cs>
-constexpr BasicFixedString<Char, sizeof...(Cs)> operator"" _fs() noexcept {
+constexpr BasicFixedString<Char, sizeof...(Cs)> operator""_fs() noexcept {
   const Char a[] = {Cs..., Char(0)};
   return {+a, sizeof...(Cs)};
 }
@@ -2908,8 +2916,9 @@ constexpr BasicFixedString<Char, sizeof...(Cs)> operator"" _fs() noexcept {
 #pragma GCC diagnostic pop
 #endif
 
+#ifndef NO_FIXED_STR_UDL
 #define FOLLY_DEFINE_FIXED_STRING_UDL(N)                     \
-  constexpr FixedString<N> operator"" _fs##N(                \
+  constexpr FixedString<N> operator""_fs##N(                 \
       const char* that, std::size_t count) noexcept(false) { \
     return {that, count};                                    \
   }                                                          \
@@ -2924,6 +2933,7 @@ FOLLY_DEFINE_FIXED_STRING_UDL(64)
 FOLLY_DEFINE_FIXED_STRING_UDL(128)
 
 #undef FOLLY_DEFINE_FIXED_STRING_UDL
+#endif
 } // namespace string_literals
 } // namespace literals
 

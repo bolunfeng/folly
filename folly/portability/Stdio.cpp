@@ -27,17 +27,25 @@ extern "C" {
 int dprintf(int fd, const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
-  SCOPE_EXIT { va_end(args); };
+  SCOPE_EXIT {
+    va_end(args);
+  };
 
-  int ret = vsnprintf(nullptr, 0, fmt, args);
+  // vsnprintf will consume it, so better copy args before using them
+  va_list argsCopy;
+  va_copy(argsCopy, args);
+  int ret = vsnprintf(nullptr, 0, fmt, argsCopy);
+  va_end(argsCopy);
   if (ret <= 0) {
     return -1;
   }
   size_t len = size_t(ret);
   char* buf = new char[len + 1];
-  SCOPE_EXIT { delete[] buf; };
+  SCOPE_EXIT {
+    delete[] buf;
+  };
   if (size_t(vsnprintf(buf, len + 1, fmt, args)) == len &&
-      write(fd, buf, len) == ssize_t(len)) {
+      folly::fileops::write(fd, buf, len) == ssize_t(len)) {
     return ret;
   }
 

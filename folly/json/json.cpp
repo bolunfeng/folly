@@ -103,7 +103,7 @@ struct Printer {
   }
   void operator()(dynamic const& v, const Context* context) const {
     switch (v.type()) {
-      case dynamic::DOUBLE:
+      case dynamic::DOUBLE: {
         if (!opts_.allow_nan_inf) {
           if (std::isnan(v.asDouble())) {
             throw json::print_error(
@@ -119,10 +119,11 @@ struct Printer {
         toAppend(
             v.asDouble(),
             &out_,
-            opts_.double_mode,
+            opts_.dtoa_mode,
             opts_.double_num_digits,
-            opts_.double_flags);
+            opts_.dtoa_flags);
         break;
+      }
       case dynamic::INT64: {
         auto intval = v.asInt();
         if (opts_.javascript_safe) {
@@ -183,10 +184,8 @@ struct Printer {
 
   template <typename Iterator>
   void printKVPairs(
-      dynamic const& o,
-      Iterator begin,
-      Iterator end,
-      const Context* context) const {
+      dynamic const& o, Iterator begin, Iterator end, const Context* context)
+      const {
     printKV(o, *begin, context);
     for (++begin; begin != end; ++begin) {
       out_ += ',';
@@ -502,8 +501,9 @@ dynamic parseObject(Input& in, json::metadata_map* map) {
       key = key.asString();
     } else if (!opts.allow_non_string_keys && !key.isString()) {
       in.error(
-          opts.convert_int_keys ? "expected string or integer for object key"
-                                : "expected string for object key");
+          opts.convert_int_keys
+              ? "expected string or integer for object key"
+              : "expected string for object key");
     }
     parseObjectKeyValue(in, ret, std::move(key), map, distinct);
 
@@ -682,7 +682,7 @@ std::string parseString(Input& in) {
     if (*in == '\\') {
       ++in;
       switch (*in) {
-        // clang-format off
+          // clang-format off
         case '\"':    ret.push_back('\"'); ++in; break;
         case '\\':    ret.push_back('\\'); ++in; break;
         case '/':     ret.push_back('/');  ++in; break;
@@ -935,7 +935,7 @@ void escapeStringImpl(
       out.append(buf, 2);
     } else if (*p <= 0x1f) {
       switch (*p) {
-        // clang-format off
+          // clang-format off
         case '\b': out.append("\\b"); p++; break;
         case '\f': out.append("\\f"); p++; break;
         case '\n': out.append("\\n"); p++; break;

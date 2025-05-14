@@ -28,12 +28,12 @@
 #include <boost/thread.hpp>
 
 #include <folly/Exception.h>
-#include <folly/VirtualExecutor.h>
 #include <folly/container/F14Map.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/executors/EDFThreadPoolExecutor.h>
 #include <folly/executors/FutureExecutor.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/executors/VirtualExecutor.h>
 #include <folly/executors/task_queue/LifoSemMPMCQueue.h>
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
 #include <folly/executors/thread_factory/InitThreadFactory.h>
@@ -653,8 +653,9 @@ TEST(InitThreadFactoryTest, InitializerCalled) {
       std::make_shared<NamedThreadFactory>("test"),
       [&initializerCalledCount] { initializerCalledCount++; });
   factory
-      .newThread(
-          [&initializerCalledCount]() { EXPECT_EQ(initializerCalledCount, 1); })
+      .newThread([&initializerCalledCount]() {
+        EXPECT_EQ(initializerCalledCount, 1);
+      })
       .join();
   EXPECT_EQ(initializerCalledCount, 1);
 }
@@ -895,11 +896,13 @@ template <typename TPE>
 void keepAliveTest() {
   auto executor = std::make_unique<TPE>(4);
 
-  auto f = futures::sleep(std::chrono::milliseconds{100})
-               .via(executor.get())
-               .thenValue([keepAlive = getKeepAliveToken(executor.get())](
-                              auto&&) { return 42; })
-               .semi();
+  auto f =
+      futures::sleep(std::chrono::milliseconds{100})
+          .via(executor.get())
+          .thenValue([keepAlive = getKeepAliveToken(executor.get())](auto&&) {
+            return 42;
+          })
+          .semi();
 
   executor.reset();
 
@@ -1023,12 +1026,16 @@ TEST(ThreadPoolExecutorTest, AddPerf) {
   auto queue = std::make_unique<
       UnboundedBlockingQueue<CPUThreadPoolExecutor::CPUTask>>();
   CPUThreadPoolExecutor e(
-      1000,
+      kIsSanitizeThread ? 25 : 1000,
       std::move(queue),
       std::make_shared<NamedThreadFactory>("CPUThreadPool"));
   e.setThreadDeathTimeout(std::chrono::milliseconds(1));
   for (int i = 0; i < 10000; i++) {
-    e.add([&]() { e.add([]() { /* sleep override */ usleep(1000); }); });
+    e.add([&, ka = getKeepAliveToken(e)]() {
+      // holding a keep-alive here permits the following add()
+      // to occur safely, concurrently with the stop() below
+      e.add([]() { /* sleep override */ usleep(1000); });
+    });
   }
   e.stop();
 }
@@ -1205,8 +1212,9 @@ static void virtualExecutorTest() {
   EXPECT_EQ(2, counter);
 }
 
-class SingleThreadedCPUThreadPoolExecutor : public CPUThreadPoolExecutor,
-                                            public SequencedExecutor {
+class SingleThreadedCPUThreadPoolExecutor
+    : public CPUThreadPoolExecutor,
+      public SequencedExecutor {
  public:
   explicit SingleThreadedCPUThreadPoolExecutor(size_t)
       : CPUThreadPoolExecutor(1) {}

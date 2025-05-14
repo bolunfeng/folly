@@ -19,13 +19,17 @@
 #include <thread>
 
 #include <folly/Memory.h>
+#include <folly/Singleton.h>
+#include <folly/container/Enumerate.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/Request.h>
 #include <folly/io/async/test/RequestContextHelper.h>
 #include <folly/portability/GTest.h>
+#include <folly/synchronization/RelaxedAtomic.h>
 #include <folly/system/ThreadName.h>
 
 #include <boost/thread/barrier.hpp>
+#include <fmt/format.h>
 
 using namespace folly;
 
@@ -50,6 +54,11 @@ class RequestContextTest : public ::testing::Test {
     // We ideally want to clear out data for any keys that may be set, not just
     // the "test" key, but there also isn't a RequestContext API to do this.
     clearData();
+  }
+
+  void TearDown() override {
+    folly::SingletonVault::singleton()->destroyInstances();
+    folly::SingletonVault::singleton()->reenableInstances();
   }
 
   RequestContext& getContext() {
@@ -113,9 +122,10 @@ TEST_F(RequestContextTest, SimpleTest) {
   RequestContext::get()->setContextData("test", std::make_unique<TestData>(10));
   base.runInEventBaseThread([&]() {
     EXPECT_TRUE(RequestContext::get() != nullptr);
-    auto data = dynamic_cast<TestData*>(
-                    RequestContext::get()->getContextData(testtoken))
-                    ->data_;
+    auto data =
+        dynamic_cast<TestData*>(
+            RequestContext::get()->getContextData(testtoken))
+            ->data_;
     EXPECT_EQ(10, data);
     rootids = getRootIdsFromAllThreads();
     EXPECT_EQ(2, rootids.size());
@@ -364,6 +374,43 @@ TEST_F(RequestContextTest, ShallowCopyClear) {
   EXPECT_EQ(1, getData().unset_);
 }
 
+TEST_F(RequestContextTest, ShallowCopyWithConcurrentModifications) {
+  RequestContextScopeGuard g0;
+  auto ctx = getContext().saveContext();
+
+  relaxed_atomic<bool> done{false};
+  std::thread mutator([&] {
+    constexpr size_t kNumIters = 2;
+    constexpr size_t kNumKeys = 1000;
+    std::vector<RequestToken> keys(kNumKeys);
+    for (auto&& [i, key] : folly::enumerate(keys)) {
+      key = RequestToken{fmt::format("key-{}", i)};
+    }
+
+    for (size_t i = 0; i < kNumIters; ++i) {
+      for (const auto& key : keys) {
+        ctx->setContextData(key, std::make_unique<TestData>(0));
+      }
+      for (const auto& key : keys) {
+        ctx->clearContextData(key);
+      }
+    }
+    done = true;
+  });
+
+  std::thread copier([&] {
+    RequestContextScopeGuard g1(ctx);
+    while (!done) {
+      ShallowCopyRequestContextScopeGuard shallowGuard;
+      // Force unsetting and re-setting all the RequestDatas.
+      RequestContextScopeGuard nullptrGuard(nullptr);
+    }
+  });
+
+  mutator.join();
+  copier.join();
+}
+
 TEST_F(RequestContextTest, ShallowCopyMulti) {
   RequestContextScopeGuard g0;
   setData(1, "test1");
@@ -585,8 +632,9 @@ TEST_F(RequestContextTest, GetThreadCachedContextData) {
   };
 
   auto getData = [](auto traits) {
-    auto* data = RequestContext::try_get()
-                     ->getThreadCachedContextData<decltype(traits)>();
+    auto* data =
+        RequestContext::try_get()
+            ->getThreadCachedContextData<decltype(traits)>();
     CHECK(data != nullptr);
     auto* idata = dynamic_cast<ImmutableRequestData<int>*>(data);
     CHECK(idata != nullptr);

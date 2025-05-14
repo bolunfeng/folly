@@ -145,9 +145,7 @@ class EventBaseEvent {
 
   const struct event* getEvent() const { return &event_; }
 
-  struct event* getEvent() {
-    return &event_;
-  }
+  struct event* getEvent() { return &event_; }
 
   bool isEventRegistered() const {
     return EventUtil::isEventRegistered(&event_);
@@ -225,6 +223,7 @@ class EventBaseBackendBase {
   using Event = EventBaseEvent;
   using FactoryFunc =
       std::function<std::unique_ptr<folly::EventBaseBackendBase>()>;
+  using RecvZcCallback = folly::Function<void(ssize_t)>;
 
   EventBaseBackendBase() = default;
   virtual ~EventBaseBackendBase() = default;
@@ -233,6 +232,13 @@ class EventBaseBackendBase {
   EventBaseBackendBase& operator=(const EventBaseBackendBase&) = delete;
 
   virtual int getPollableFd() const { return -1; }
+
+  virtual int getNapiId() const { return -1; }
+  virtual void queueRecvZc(
+      int /*fd*/,
+      void* /*buf*/,
+      unsigned long /*nbytes*/,
+      RecvZcCallback&& /*callback*/) {}
 
   virtual event_base* getEventBase() = 0;
   virtual int eb_event_base_loop(int flags) = 0;

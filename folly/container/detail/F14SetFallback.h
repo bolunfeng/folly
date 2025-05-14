@@ -370,8 +370,9 @@ class F14BasicSet
   // exact for libstdc++, approximate for others
   std::size_t getAllocatedMemorySize() const {
     std::size_t rv = 0;
-    visitAllocationClasses(
-        [&](std::size_t bytes, std::size_t n) { rv += bytes * n; });
+    visitAllocationClasses([&](std::size_t bytes, std::size_t n) {
+      rv += bytes * n;
+    });
     return rv;
   }
 
@@ -405,9 +406,17 @@ class F14BasicSet
   F14HashToken prehash(key_type const& /*key*/) const {
     return {}; // Ignored.
   }
+  F14HashToken prehash(key_type const& /*key*/, std::size_t /*hash*/) const {
+    return {}; // Ignored.
+  }
 
   template <typename K>
   EnableHeterogeneousFind<K, F14HashToken> prehash(K const& /*key*/) const {
+    return {};
+  }
+  template <typename K>
+  EnableHeterogeneousFind<K, F14HashToken> prehash(
+      K const& /*key*/, std::size_t /*hash*/) const {
     return {};
   }
 

@@ -20,7 +20,10 @@
 #include <random>
 #include <vector>
 
+#include <fmt/core.h>
+
 #include <folly/Random.h>
+#include <folly/container/span.h>
 #include <folly/portability/GTest.h>
 
 namespace folly {
@@ -73,6 +76,14 @@ void testEFS() {
     EXPECT_EQ(lsb, extractFirstSet(v));
   }
 }
+
+template <typename T>
+struct BitsAllUintsTest : ::testing::Test {};
+
+using UintsToTest =
+    ::testing::Types<std::uint8_t, std::uint16_t, std::uint32_t, std::uint64_t>;
+
+TYPED_TEST_SUITE(BitsAllUintsTest, UintsToTest);
 
 } // namespace
 
@@ -273,10 +284,18 @@ TEST(Bits, BitReverse) {
   }
 }
 
+static_assert(std::is_trivial_v<Unaligned<uint64_t>>);
+static_assert(std::is_trivially_copy_assignable_v<Unaligned<uint64_t>>);
+static_assert(std::is_nothrow_constructible_v<Unaligned<uint64_t>, uint64_t>);
+static_assert(std::is_nothrow_assignable_v<Unaligned<uint64_t>, uint64_t>);
+static_assert(sizeof(Unaligned<uint64_t>) == sizeof(uint64_t));
+static_assert(alignof(Unaligned<uint64_t>) == 1);
+
 TEST(Bits, PartialLoadUnaligned) {
   std::vector<char> buf(128);
-  std::generate(
-      buf.begin(), buf.end(), [] { return folly::Random::rand32(255); });
+  std::generate(buf.begin(), buf.end(), [] {
+    return folly::Random::rand32(255);
+  });
   for (size_t l = 0; l < 8; ++l) {
     for (size_t pos = 0; pos <= buf.size() - l; ++pos) {
       auto p = buf.data() + pos;
@@ -319,6 +338,304 @@ TEST(Bits, BitCastCompatibilityTest) {
   auto dbl = folly::bit_cast<double>(one);
   auto two = folly::bit_cast<std::uint64_t>(dbl);
   EXPECT_EQ(one, two);
+}
+
+TEST(Bits, LoadUnalignedUB) {
+  //  test case from: https://github.com/facebook/folly/issues/2150
+  auto func = [](uint8_t a, uint8_t b, uint64_t c, uint64_t d) -> uint32_t {
+    char buffer[1 + 1 + 8 + 8];
+    folly::storeUnaligned<uint8_t>(buffer + 0, a);
+    folly::storeUnaligned<uint8_t>(buffer + 1, b);
+    folly::storeUnaligned<uint64_t>(buffer + 2, c);
+    folly::storeUnaligned<uint64_t>(buffer + 2 + 8, d);
+
+    uint16_t ret = 0;
+    for (std::size_t i = 0; i < sizeof(buffer); i += 2) {
+      ret += folly::loadUnaligned<uint16_t>(buffer + i);
+    }
+    return ret;
+  };
+
+  uint8_t a = 0, b = 0;
+  uint64_t c = 0, d = 0;
+  uint16_t x = func(a, b, c, d);
+  EXPECT_EQ(0, x);
+}
+
+TYPED_TEST(BitsAllUintsTest, NLeastSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(n_least_significant_bits<T>(0) == 0b0, "");
+  static_assert(n_least_significant_bits<T>(1) == 0b1, "");
+  static_assert(n_least_significant_bits<T>(2) == 0b11, "");
+  static_assert(n_least_significant_bits<T>(3) == 0b111, "");
+  static_assert(n_least_significant_bits<T>(4) == 0b1111, "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = n_least_significant_bits<T>(i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = n_least_significant_bits<T>(i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    std::uint64_t expected = (std::uint64_t{1} << i) - 1;
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countr_one(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, NMostSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(
+      n_most_significant_bits<T>(kBitSize) == static_cast<T>(~0b0), "");
+  static_assert(
+      n_most_significant_bits<T>(kBitSize - 1) == static_cast<T>(~0b1), "");
+  static_assert(
+      n_most_significant_bits<T>(kBitSize - 2) == static_cast<T>(~0b11), "");
+  static_assert(
+      n_most_significant_bits<T>(kBitSize - 3) == static_cast<T>(~0b111), "");
+  static_assert(
+      n_most_significant_bits<T>(kBitSize - 4) == static_cast<T>(~0b1111), "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = n_most_significant_bits<T>(i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = n_most_significant_bits<T>(i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    T expected = ~n_least_significant_bits<T>(kBitSize - i);
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countl_one(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, ClearNLeastSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(clear_n_least_significant_bits(T{0b11U}, 1U) == 0b10U, "");
+  static_assert(clear_n_least_significant_bits(T{0b101U}, 1U) == 0b100U, "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = clear_n_least_significant_bits(static_cast<T>(-1), i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = clear_n_least_significant_bits(static_cast<T>(-1), i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    T expected = n_most_significant_bits<T>(kBitSize - i);
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countr_zero(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, SetNLeastSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(set_n_least_significant_bits(T{0b10U}, 1U) == 0b11U, "");
+  static_assert(set_n_least_significant_bits(T{0b100U}, 1U) == 0b101U, "");
+  static_assert(set_n_least_significant_bits(T{0b100U}, 2U) == 0b111U, "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = set_n_least_significant_bits(T{}, i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = set_n_least_significant_bits(T{}, i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    T expected = n_least_significant_bits<T>(i);
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countr_one(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, ClearNMostSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(
+      clear_n_most_significant_bits(T{0b101U}, kBitSize - 1) == 0b1U, "");
+  static_assert(
+      clear_n_most_significant_bits(T{0b1100U}, kBitSize - 3) == 0b100U, "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = clear_n_most_significant_bits(static_cast<T>(-1), i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = clear_n_most_significant_bits(static_cast<T>(-1), i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    T expected = n_least_significant_bits<T>(kBitSize - i);
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countl_zero(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, SetNMostSignificantBits) {
+  using T = TypeParam;
+
+  static constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  static_assert(
+      set_n_most_significant_bits(T{0b1}, kBitSize - 2) ==
+          static_cast<T>(~0b10),
+      "");
+  static_assert(
+      set_n_most_significant_bits(T{0b1100U}, kBitSize - 3) ==
+          static_cast<T>(~0b11),
+      "");
+
+  constexpr auto cactual = [] {
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      ret[i] = set_n_most_significant_bits(T{}, i);
+    }
+    return ret;
+  }();
+  auto ractual = [] { // runtime can use a different implementation
+    std::array<T, kBitSize> ret{};
+    for (std::size_t i = 0; i < kBitSize; ++i) {
+      compiler_must_not_predict(i); // runtime
+      ret[i] = set_n_most_significant_bits(T{}, i);
+    }
+    return ret;
+  }();
+  for (std::size_t i = 0; i < kBitSize; ++i) {
+    T expected = n_most_significant_bits<T>(i);
+#ifdef __cpp_lib_bitops
+    EXPECT_EQ(static_cast<int>(i), std::countl_one(expected));
+#endif
+    EXPECT_EQ(expected, cactual[i]);
+    EXPECT_EQ(expected, ractual[i]);
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, GetBitAt) {
+  using T = TypeParam;
+
+  constexpr std::size_t kBitSize = sizeof(T) * 8;
+
+  T kOnes = folly::set_n_least_significant_bits(T{}, kBitSize);
+  T in[] = {kOnes, 0, kOnes};
+
+  for (std::size_t i = 0; i != kBitSize; ++i) {
+    in[1] = T{0};
+    in[2] = kOnes;
+    T bit = static_cast<T>(1UL << i);
+    in[1] = in[1] | bit;
+    in[2] = in[2] ^ bit;
+    ASSERT_TRUE(folly::get_bit_at(in, kBitSize + i)) << "i=" << i;
+    ASSERT_FALSE(folly::get_bit_at(in, kBitSize * 2 + i)) << "i=" << i;
+  }
+}
+
+TYPED_TEST(BitsAllUintsTest, GetBitAtLE) {
+  using T = TypeParam;
+
+  if constexpr (!folly::kIsLittleEndian) {
+    return;
+  }
+
+  {
+    std::uint64_t in = folly::set_n_least_significant_bits(0UL, 64);
+    const auto* ptr = reinterpret_cast<const T*>(&in);
+
+    for (std::size_t i = 0; i != 64; ++i) {
+      EXPECT_TRUE(folly::get_bit_at(ptr, i));
+    }
+
+    in = 0;
+    for (std::size_t i = 0; i != 64; ++i) {
+      EXPECT_FALSE(folly::get_bit_at(ptr, i));
+    }
+  }
+  {
+    const std::uint8_t in[] = {0b101, 0b1110, 0, 0, 0, 0, 0, 0};
+    const auto* ptr = reinterpret_cast<const T*>(in);
+
+    // in[0]
+    EXPECT_EQ(1, folly::get_bit_at(ptr, 0));
+    EXPECT_EQ(0, folly::get_bit_at(ptr, 1));
+    EXPECT_EQ(1, folly::get_bit_at(ptr, 2));
+    EXPECT_EQ(0, folly::get_bit_at(ptr, 3));
+
+    // in[1]
+    EXPECT_EQ(0, folly::get_bit_at(ptr, 8));
+    EXPECT_EQ(1, folly::get_bit_at(ptr, 9));
+    EXPECT_EQ(1, folly::get_bit_at(ptr, 10));
+    EXPECT_EQ(1, folly::get_bit_at(ptr, 11));
+    EXPECT_EQ(0, folly::get_bit_at(ptr, 12));
+  }
 }
 
 } // namespace folly

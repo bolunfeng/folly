@@ -34,12 +34,14 @@ static_assert(std::is_same<atomic_uint_fast_wait_t, Futex<std::atomic>>{}, "");
  * functions
  */
 inline std::cv_status toCvStatus(FutexResult result) {
-  return (result == FutexResult::TIMEDOUT) ? std::cv_status::timeout
-                                           : std::cv_status::no_timeout;
+  return (result == FutexResult::TIMEDOUT)
+      ? std::cv_status::timeout
+      : std::cv_status::no_timeout;
 }
 inline std::cv_status toCvStatus(ParkResult result) {
-  return (result == ParkResult::Timeout) ? std::cv_status::timeout
-                                         : std::cv_status::no_timeout;
+  return (result == ParkResult::Timeout)
+      ? std::cv_status::timeout
+      : std::cv_status::no_timeout;
 }
 
 // ParkingLot instantiation for futex management
@@ -55,8 +57,7 @@ void atomic_wait_impl(
 template <template <typename...> class Atom, typename Integer, typename... Args>
 void atomic_wait_impl(const Atom<Integer, Args...>* atomic, Integer old) {
   static_assert(!std::is_same<Integer, std::uint32_t>{}, "");
-  parkingLot.park(
-      atomic, -1, [&] { return atomic->load() == old; }, [] {});
+  parkingLot.park(atomic, -1, [&] { return atomic->load() == old; }, [] {});
 }
 
 template <

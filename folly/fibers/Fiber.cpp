@@ -41,8 +41,9 @@ size_t nonMagicInBytes(unsigned char* stackLimit, size_t stackSize) {
   auto begin = reinterpret_cast<uint64_t*>(stackLimit);
   auto end = reinterpret_cast<uint64_t*>(stackLimit + stackSize);
 
-  auto firstNonMagic = std::find_if(
-      begin, end, [](uint64_t val) { return val != kMagic8Bytes; });
+  auto firstNonMagic = std::find_if(begin, end, [](uint64_t val) {
+    return val != kMagic8Bytes;
+  });
 
   return (end - firstNonMagic) * sizeof(uint64_t);
 }
@@ -157,7 +158,7 @@ void Fiber::recordStackPosition() {
       }
     } catch (...) {
       fiberManager_.exceptionCallback_(
-          std::current_exception(), "running Fiber func_/resultFunc_");
+          current_exception(), "running Fiber func_/resultFunc_");
     }
 
     if (FOLLY_UNLIKELY(recordStackUsed_)) {
@@ -183,7 +184,7 @@ void Fiber::preempt(State state) {
     DCHECK_EQ(state_, RUNNING);
     DCHECK_NE(state, RUNNING);
     if (state != AWAITING_IMMEDIATE) {
-      CHECK(fiberManager_.currentException_ == std::current_exception());
+      CHECK(fiberManager_.currentException_ == current_exception());
       CHECK_EQ(fiberManager_.numUncaughtExceptions_, uncaught_exceptions());
     }
 

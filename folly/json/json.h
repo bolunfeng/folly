@@ -102,7 +102,7 @@ struct serialization_opts {
 
   // Sort keys of all objects before printing out (potentially slow)
   // using the provided less functor.
-  Function<bool(dynamic const&, dynamic const&) const> sort_keys_by;
+  Function<bool(dynamic const&, dynamic const&) const> sort_keys_by{};
 
   // Replace invalid utf8 characters with U+FFFD and continue
   bool skip_invalid_utf8{false};
@@ -112,11 +112,11 @@ struct serialization_opts {
 
   // Options for how to print floating point values.  See Conv.h
   // toAppend implementation for floating point for more info
-  double_conversion::DoubleToStringConverter::DtoaMode double_mode{
-      double_conversion::DoubleToStringConverter::SHORTEST};
-  unsigned int double_num_digits{0}; // ignored when mode is SHORTEST
-  double_conversion::DoubleToStringConverter::Flags double_flags{
-      double_conversion::DoubleToStringConverter::NO_FLAGS};
+  folly::DtoaMode dtoa_mode{};
+
+  unsigned int double_num_digits{0}; // ignored when mode is SHORTEST*
+
+  folly::DtoaFlags dtoa_flags{};
 
   // Fallback to double when a value that looks like integer is too big to
   // fit in an int64_t. Can result in loss a of precision.
@@ -223,6 +223,7 @@ std::string toJson(dynamic const&);
 
 /**
  * Serialize a dynamic into a json string with indentation.
+ * Note that the keys of all objects will be sorted.
  */
 std::string toPrettyJson(dynamic const&);
 

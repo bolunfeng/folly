@@ -24,7 +24,6 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/types.h>
 
 #include <glog/logging.h>
 
@@ -32,6 +31,8 @@
 #include <folly/Subprocess.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/Unistd.h>
+
+#ifdef __linux__
 
 using folly::Subprocess;
 
@@ -71,7 +72,7 @@ void runChild(const char* file) {
 }
 
 int main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   CHECK_EQ(argc, 2);
   if (FLAGS_child) {
     runChild(argv[1]);
@@ -80,3 +81,11 @@ int main(int argc, char* argv[]) {
   }
   return 0;
 }
+
+#else // __linux__
+
+int main() {
+  return 0;
+}
+
+#endif // __linux__

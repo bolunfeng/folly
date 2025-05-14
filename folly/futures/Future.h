@@ -30,9 +30,9 @@
 #include <folly/Try.h>
 #include <folly/Unit.h>
 #include <folly/Utility.h>
+#include <folly/coro/Traits.h>
 #include <folly/executors/DrivableExecutor.h>
 #include <folly/executors/TimedDrivableExecutor.h>
-#include <folly/experimental/coro/Traits.h>
 #include <folly/fibers/Baton.h>
 #include <folly/functional/Invoke.h>
 #include <folly/futures/Portability.h>
@@ -45,15 +45,16 @@
 
 namespace folly {
 
-class FOLLY_EXPORT FutureException
-    : public static_what_exception<std::logic_error> {
+class FOLLY_EXPORT FutureException : public std::logic_error {
  public:
-  using static_what_exception<std::logic_error>::static_what_exception;
+  using std::logic_error::logic_error;
+  FutureException() : std::logic_error{""} {}
 };
 
 class FOLLY_EXPORT FutureInvalid : public FutureException {
  public:
-  FutureInvalid() : FutureException(static_lifetime{}, "Future invalid") {}
+  FutureInvalid() = default;
+  char const* what() const noexcept override { return "Future invalid"; }
 };
 
 /// At most one continuation may be attached to any given Future.
@@ -63,42 +64,52 @@ class FOLLY_EXPORT FutureInvalid : public FutureException {
 /// thrown instead.
 class FOLLY_EXPORT FutureAlreadyContinued : public FutureException {
  public:
-  FutureAlreadyContinued()
-      : FutureException(static_lifetime{}, "Future already continued") {}
+  FutureAlreadyContinued() = default;
+  char const* what() const noexcept override {
+    return "Future already continued";
+  }
 };
 
 class FOLLY_EXPORT FutureNotReady : public FutureException {
  public:
-  FutureNotReady() : FutureException(static_lifetime{}, "Future not ready") {}
+  FutureNotReady() = default;
+  char const* what() const noexcept override { return "Future not ready"; }
 };
 
 class FOLLY_EXPORT FutureCancellation : public FutureException {
  public:
-  FutureCancellation()
-      : FutureException(static_lifetime{}, "Future was cancelled") {}
+  FutureCancellation() = default;
+  char const* what() const noexcept override { return "Future was cancelled"; }
 };
 
 class FOLLY_EXPORT FutureTimeout : public FutureException {
  public:
-  FutureTimeout() : FutureException(static_lifetime{}, "Timed out") {}
+  FutureTimeout() = default;
+  char const* what() const noexcept override { return "Timed out"; }
 };
 
 class FOLLY_EXPORT FuturePredicateDoesNotObtain : public FutureException {
  public:
-  FuturePredicateDoesNotObtain()
-      : FutureException(static_lifetime{}, "Predicate does not obtain") {}
+  FuturePredicateDoesNotObtain() = default;
+  char const* what() const noexcept override {
+    return "Predicate does not obtain";
+  }
 };
 
 class FOLLY_EXPORT FutureNoTimekeeper : public FutureException {
  public:
-  FutureNoTimekeeper()
-      : FutureException(static_lifetime{}, "No timekeeper available") {}
+  FutureNoTimekeeper() = default;
+  char const* what() const noexcept override {
+    return "No timekeeper available";
+  }
 };
 
 class FOLLY_EXPORT FutureNoExecutor : public FutureException {
  public:
-  FutureNoExecutor()
-      : FutureException(static_lifetime{}, "No executor provided to via") {}
+  FutureNoExecutor() = default;
+  char const* what() const noexcept override {
+    return "No executor provided to via";
+  }
 };
 
 template <class T>
@@ -106,6 +117,18 @@ class Future;
 
 template <class T>
 class SemiFuture;
+
+template <class T>
+struct PromiseContract {
+  Promise<T> promise;
+  Future<T> future;
+};
+
+template <class T>
+struct SemiPromiseContract {
+  Promise<T> promise;
+  SemiFuture<T> future;
+};
 
 template <class T>
 class FutureSplitter;
@@ -1002,10 +1025,10 @@ class SemiFuture : private futures::detail::FutureBase<T> {
 };
 
 template <class T>
-std::pair<Promise<T>, SemiFuture<T>> makePromiseContract() {
+SemiPromiseContract<T> makePromiseContract() {
   auto p = Promise<T>();
   auto f = p.getSemiFuture();
-  return std::make_pair(std::move(p), std::move(f));
+  return {std::move(p), std::move(f)};
 }
 
 /// The interface (along with SemiFuture) for the consumer-side of a
@@ -1102,8 +1125,9 @@ class Future : private futures::detail::FutureBase<T> {
               std::is_convertible<T2&&, T>::value,
           int>::type = 0>
   /* implicit */ Future(Future<T2>&& other)
-      : Future(std::move(other).thenValue(
-            [](T2&& v) { return T(std::move(v)); })) {}
+      : Future(std::move(other).thenValue([](T2&& v) {
+          return T(std::move(v));
+        })) {}
 
   template <
       class T2,
@@ -1113,8 +1137,9 @@ class Future : private futures::detail::FutureBase<T> {
               !std::is_convertible<T2&&, T>::value,
           int>::type = 0>
   explicit Future(Future<T2>&& other)
-      : Future(std::move(other).thenValue(
-            [](T2&& v) { return T(std::move(v)); })) {}
+      : Future(std::move(other).thenValue([](T2&& v) {
+          return T(std::move(v));
+        })) {}
 
   template <
       class T2,
@@ -1123,8 +1148,9 @@ class Future : private futures::detail::FutureBase<T> {
               std::is_constructible<T, T2&&>::value,
           int>::type = 0>
   Future& operator=(Future<T2>&& other) {
-    return operator=(
-        std::move(other).thenValue([](T2&& v) { return T(std::move(v)); }));
+    return operator=(std::move(other).thenValue([](T2 && v) {
+      return T(std::move(v));
+    }));
   }
 
   using Base::cancel;
@@ -1993,10 +2019,10 @@ class Timekeeper {
 };
 
 template <class T>
-std::pair<Promise<T>, Future<T>> makePromiseContract(Executor::KeepAlive<> e) {
+PromiseContract<T> makePromiseContract(Executor::KeepAlive<> e) {
   auto p = Promise<T>();
   auto f = p.getSemiFuture().via(std::move(e));
-  return std::make_pair(std::move(p), std::move(f));
+  return {std::move(p), std::move(f)};
 }
 
 template <class F>
@@ -2525,8 +2551,12 @@ Future<T> reduce(It first, It last, T&& initial, F&& func);
 
 /// Sugar for the most common case
 template <class Collection, class T, class F>
-auto reduce(Collection&& c, T&& initial, F&& func) -> decltype(folly::reduce(
-    c.begin(), c.end(), static_cast<T&&>(initial), static_cast<F&&>(func))) {
+auto reduce(Collection&& c, T&& initial, F&& func)
+    -> decltype(folly::reduce(
+        c.begin(),
+        c.end(),
+        static_cast<T&&>(initial),
+        static_cast<F&&>(func))) {
   return folly::reduce(
       c.begin(), c.end(), static_cast<T&&>(initial), static_cast<F&&>(func));
 }

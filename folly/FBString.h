@@ -683,31 +683,14 @@ inline void fbstring_core<Char>::initSmall(
       (sizeof(size_t) & (sizeof(size_t) - 1)) == 0,
       "fbstring size assumption violation");
 
-// If data is aligned, use fast word-wise copying. Otherwise,
-// use conservative memcpy.
-// The word-wise path reads bytes which are outside the range of
-// the string, and makes ASan unhappy, so we disable it when
-// compiling with ASan.
-#ifndef FOLLY_SANITIZE_ADDRESS
-  if ((reinterpret_cast<size_t>(data) & (sizeof(size_t) - 1)) == 0) {
-    const size_t byteSize = size * sizeof(Char);
-    constexpr size_t wordWidth = sizeof(size_t);
-    switch ((byteSize + wordWidth - 1) / wordWidth) { // Number of words.
-      case 3:
-        ml_.capacity_ = reinterpret_cast<const size_t*>(data)[2];
-        [[fallthrough]];
-      case 2:
-        ml_.size_ = reinterpret_cast<const size_t*>(data)[1];
-        [[fallthrough]];
-      case 1:
-        ml_.data_ = *reinterpret_cast<Char**>(const_cast<Char*>(data));
-        [[fallthrough]];
-      case 0:
-        break;
-    }
-  } else
-#endif
-  {
+  constexpr size_t kPageSize = 4096;
+
+  const auto addr = reinterpret_cast<uintptr_t>(data);
+  if (!kIsSanitize && // sanitizer would trap on over-reads
+      size && (addr ^ (addr + sizeof(small_) - 1)) < kPageSize) {
+    // the input data is all within one page so over-reads will not segfault
+    std::memcpy(small_, data, sizeof(small_)); // lowers to a 4-insn sequence
+  } else {
     if (size != 0) {
       fbstring_detail::podCopy(data, data + size, small_);
     }
@@ -1014,6 +997,15 @@ class basic_fbstring {
  private:
   using string_view_type = std::basic_string_view<value_type, traits_type>;
 
+  template <typename StringViewLike>
+  static inline constexpr bool is_string_view_like_v =
+      std::is_convertible_v<StringViewLike const&, string_view_type> &&
+      !std::is_convertible_v<StringViewLike const&, const_pointer>;
+
+  template <typename StringViewLike, typename Dummy>
+  using if_is_string_view_like_t =
+      std::enable_if_t<is_string_view_like_v<StringViewLike>, Dummy>;
+
   static void procrustes(size_type& n, size_type nmax) {
     if (n > nmax) {
       n = nmax;
@@ -1109,19 +1101,13 @@ class basic_fbstring {
 
   template <
       typename StringViewLike,
-      std::enable_if_t<
-          std::is_convertible_v<const StringViewLike&, string_view_type> &&
-              !std::is_convertible_v<const StringViewLike&, const value_type*>,
-          int> = 0>
+      if_is_string_view_like_t<StringViewLike, int> = 0>
   explicit basic_fbstring(const StringViewLike& view, const A& a = A())
       : basic_fbstring(string_view_type(view), a, string_view_ctor{}) {}
 
   template <
       typename StringViewLike,
-      std::enable_if_t<
-          std::is_convertible_v<const StringViewLike&, string_view_type> &&
-              !std::is_convertible_v<const StringViewLike&, const value_type*>,
-          int> = 0>
+      if_is_string_view_like_t<StringViewLike, int> = 0>
   basic_fbstring(
       const StringViewLike& view, size_type pos, size_type n, const A& a = A())
       : basic_fbstring(
@@ -1282,6 +1268,14 @@ class basic_fbstring {
     return *this;
   }
 
+  template <
+      typename StringViewLike,
+      if_is_string_view_like_t<StringViewLike, int> = 0>
+  basic_fbstring& operator+=(const StringViewLike& like) {
+    append(like);
+    return *this;
+  }
+
   basic_fbstring& append(const basic_fbstring& str);
 
   basic_fbstring& append(
@@ -1303,6 +1297,14 @@ class basic_fbstring {
 
   basic_fbstring& append(std::initializer_list<value_type> il) {
     return append(il.begin(), il.end());
+  }
+
+  template <
+      typename StringViewLike,
+      if_is_string_view_like_t<StringViewLike, int> = 0>
+  basic_fbstring& append(const StringViewLike& like) {
+    string_view_type view = like;
+    return append(view.begin(), view.end());
   }
 
   void push_back(const value_type c) { // primitive
@@ -1761,10 +1763,11 @@ class basic_fbstring {
 template <typename E, class T, class A, class S>
 FOLLY_NOINLINE typename basic_fbstring<E, T, A, S>::size_type
 basic_fbstring<E, T, A, S>::traitsLength(const value_type* s) {
-  return s ? traits_type::length(s)
-           : (throw_exception<std::logic_error>(
-                  "basic_fbstring: null pointer initializer not valid"),
-              0);
+  return s
+      ? traits_type::length(s)
+      : (throw_exception<std::logic_error>(
+             "basic_fbstring: null pointer initializer not valid"),
+         0);
 }
 
 template <typename E, class T, class A, class S>

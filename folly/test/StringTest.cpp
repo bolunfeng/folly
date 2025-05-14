@@ -29,6 +29,7 @@
 
 #include <folly/FBVector.h>
 #include <folly/container/Array.h>
+#include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <folly/test/TestUtils.h>
 
@@ -78,10 +79,14 @@ TEST(StringPrintf, Appending) {
 void vprintfCheck(const char* expected, const char* fmt, ...) {
   va_list apOrig;
   va_start(apOrig, fmt);
-  SCOPE_EXIT { va_end(apOrig); };
+  SCOPE_EXIT {
+    va_end(apOrig);
+  };
   va_list ap;
   va_copy(ap, apOrig);
-  SCOPE_EXIT { va_end(ap); };
+  SCOPE_EXIT {
+    va_end(ap);
+  };
 
   // Check both APIs for calling stringVPrintf()
   EXPECT_EQ(expected, stringVPrintf(fmt, ap));
@@ -105,7 +110,9 @@ void vprintfCheck(const char* expected, const char* fmt, ...) {
 void vprintfError(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  SCOPE_EXIT { va_end(ap); };
+  SCOPE_EXIT {
+    va_end(ap);
+  };
 
 #ifdef HAVE_VSNPRINTF_ERRORS
   // OSX's sprintf family does not return a negative number on a bad format
@@ -1459,4 +1466,26 @@ TEST(String, hasSpaceOrCntrlSymbolsTest) {
   hasCntrl[0] = 1;
   ASSERT_TRUE(std::iscntrl(1));
   ASSERT_TRUE(hasSpaceOrCntrlSymbols(hasCntrl));
+}
+
+TEST(String, format_string_for_each_named_arg) {
+  auto const fn = [](std::string_view str) {
+    std::vector<std::string> out;
+    folly::format_string_for_each_named_arg(str, [&](auto sub) {
+      out.push_back(std::string(sub));
+    });
+    return out;
+  };
+  EXPECT_THAT(fn(""), testing::ElementsAre());
+  EXPECT_THAT(fn("hello"), testing::ElementsAre());
+  EXPECT_THAT(fn("{{}}"), testing::ElementsAre());
+  EXPECT_THAT(fn("hello{{}}world"), testing::ElementsAre());
+  EXPECT_THAT(fn("hello{}world"), testing::ElementsAre());
+  EXPECT_THAT(fn("hello{3}world"), testing::ElementsAre());
+  EXPECT_THAT(fn("hello{34}world"), testing::ElementsAre());
+  EXPECT_THAT(fn("hello{bob}world"), testing::ElementsAre("bob"));
+  EXPECT_THAT(fn("hello{3}world{bob}go"), testing::ElementsAre("bob"));
+  EXPECT_THAT(fn("hello{bob}world{3}go"), testing::ElementsAre("bob"));
+  EXPECT_THAT(fn("hello{bob}world{sam}go"), testing::ElementsAre("bob", "sam"));
+  EXPECT_THAT(fn("{bob}world{sam}"), testing::ElementsAre("bob", "sam"));
 }

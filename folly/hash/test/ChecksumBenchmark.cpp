@@ -23,8 +23,10 @@
 constexpr size_t kBufSize = 512 * 1024;
 uint8_t* buf;
 
-#define BENCH_CRC32(S) \
-  BENCHMARK(crc32_##S) { folly::doNotOptimizeAway(folly::crc32(buf, (S), 2)); }
+#define BENCH_CRC32(S)                                   \
+  BENCHMARK(crc32_##S) {                                 \
+    folly::doNotOptimizeAway(folly::crc32(buf, (S), 2)); \
+  }
 
 #define BENCH_CRC32C(S)                                   \
   BENCHMARK(crc32c_##S) {                                 \
@@ -56,7 +58,7 @@ BENCH_CRC32C(262144)
 BENCH_CRC32C(524288)
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   google::InitGoogleLogging(argv[0]);
 
   buf = static_cast<uint8_t*>(folly::aligned_malloc(kBufSize + 64, 4096));

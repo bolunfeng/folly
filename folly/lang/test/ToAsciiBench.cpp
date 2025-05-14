@@ -113,7 +113,6 @@ struct inputs<10> {
       12345678901234567890u,
   };
 };
-constexpr uint64_t const inputs<10>::data[21];
 
 template <>
 struct inputs<16> {
@@ -137,7 +136,6 @@ struct inputs<16> {
       0x123456789abcdef0,
   };
 };
-constexpr uint64_t const inputs<16>::data[17];
 
 } // namespace
 
@@ -460,7 +458,7 @@ BENCHMARK_GROUP(16)
 #undef BENCHMARK_GROUP
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
   return 0;
 }

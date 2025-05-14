@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <random>
+#include <unordered_map>
 
 #include <folly/Range.h>
 #include <folly/io/TypedIOBuf.h>
@@ -46,7 +47,7 @@ void prepend(std::unique_ptr<IOBuf>& buf, StringPiece str) {
 
 TEST(IOBuf, Simple) {
   unique_ptr<IOBuf> buf(IOBuf::create(100));
-  uint32_t cap = buf->capacity();
+  const auto cap = buf->capacity();
   EXPECT_LE(100, cap);
   EXPECT_EQ(0, buf->headroom());
   EXPECT_EQ(0, buf->length());
@@ -187,11 +188,11 @@ TEST(IOBuf, TakeOwnershipFreeOnErrorBugfix) {
   static void* freedBuf = nullptr;
   static void* freedUserData = nullptr;
 
-  folly::IOBuf::FreeFunction freeFn = [](void* calledBuf,
-                                         void* calledUserData) {
-    freedBuf = calledBuf;
-    freedUserData = calledUserData;
-  };
+  folly::IOBuf::FreeFunction freeFn =
+      [](void* calledBuf, void* calledUserData) {
+        freedBuf = calledBuf;
+        freedUserData = calledUserData;
+      };
 
   int userData = 0;
   char buf[1024];
@@ -1400,6 +1401,7 @@ TEST(IOBuf, CloneAsValue) {
     EXPECT_TRUE(copy2.isShared());
     EXPECT_TRUE(buf->isChained());
     EXPECT_TRUE(copy2.isChained());
+    EXPECT_EQ(buf->toString(), copy2.toString());
 
     copy.unshareOne();
     EXPECT_TRUE(buf->isShared());
@@ -1420,6 +1422,20 @@ TEST(IOBuf, CloneAsValue) {
     EXPECT_EQ("hello world goodbye", std::string(p2, copy2.length()));
   }
 
+  {
+    // Test clones from value IOBufs.
+    auto copy = buf->cloneAsValue();
+    auto copy2 = copy.cloneAsValue();
+    EXPECT_TRUE(copy2.isShared());
+    EXPECT_TRUE(copy2.isChained());
+    EXPECT_EQ(buf->toString(), copy2.toString());
+
+    auto copy3 = copy.clone();
+    EXPECT_TRUE(copy3->isShared());
+    EXPECT_TRUE(copy3->isChained());
+    EXPECT_EQ(buf->toString(), copy3->toString());
+  }
+
   EXPECT_FALSE(buf->isShared());
 }
 
@@ -1432,15 +1448,6 @@ std::unique_ptr<IOBuf> wrap(const char* str) {
 std::unique_ptr<IOBuf> copy(const char* str) {
   // At least 1KiB of tailroom, to ensure an external buffer
   return IOBuf::copyBuffer(str, strlen(str), 0, 1024);
-}
-
-std::string toString(const folly::IOBuf& buf) {
-  std::string result;
-  result.reserve(buf.computeChainDataLength());
-  for (auto& b : buf) {
-    result.append(reinterpret_cast<const char*>(b.data()), b.size());
-  }
-  return result;
 }
 
 char* writableStr(folly::IOBuf& buf) {
@@ -1519,7 +1526,7 @@ TEST(IOBuf, Managed) {
   buf1->prependChain(std::move(buf3UP));
   buf1->prependChain(std::move(buf4UP));
 
-  EXPECT_EQ("helloworldhelloworld", toString(*buf1));
+  EXPECT_EQ("helloworldhelloworld", buf1->to<std::string>());
   EXPECT_FALSE(buf1->isManaged());
 
   buf1->makeManaged();
@@ -1544,7 +1551,7 @@ TEST(IOBuf, Managed) {
   // change from buf2 is reflected in buf4.
   writableStr(*buf1)[0] = 'j';
   writableStr(*buf2)[0] = 'x';
-  EXPECT_EQ("jelloxorldhelloxorld", toString(*buf1));
+  EXPECT_EQ("jelloxorldhelloxorld", buf1->to<std::string>());
 }
 
 TEST(IOBuf, CoalesceEmptyBuffers) {
@@ -1738,7 +1745,7 @@ TEST(IOBuf, FreeFn) {
     unique_ptr<IOBuf> iobuf(IOBuf::create(64 * 1024));
 
     EXPECT_TRUE(iobuf->appendSharedInfoObserver(observer));
-    auto str = iobuf->moveToFbString().toStdString();
+    auto str = iobuf->moveToFbString();
   }
   EXPECT_EQ(freeVal, 0);
   EXPECT_EQ(releaseVal, 1);
@@ -1814,6 +1821,7 @@ TEST(IOBuf, AppendTo) {
 
   IOBuf buf;
   EXPECT_EQ(buf.to<std::string>(), "");
+  EXPECT_EQ(buf.toString(), "");
 
   auto temp = &buf;
   temp->insertAfterThisOne(IOBuf::copyBuffer("Hello"));
@@ -1873,3 +1881,112 @@ TEST(IOBuf, copyConstructBufferTooLarge) {
           (size_t)0xFFFF'FFFF'FFFF'FFFE),
       std::bad_alloc);
 }
+
+TEST(IOBuf, MaybeSplitTail) {
+  auto buf = IOBuf::create(256);
+  append(buf, "Hello ");
+
+  size_t tailroom1 = buf->tailroom();
+  auto buf1 = buf->maybeSplitTail();
+  EXPECT_EQ(buf->tailroom(), 0);
+  EXPECT_EQ(buf1->tailroom(), tailroom1);
+  EXPECT_EQ(
+      reinterpret_cast<const void*>(buf->bufferEnd()),
+      reinterpret_cast<const void*>(buf1->buffer()));
+  EXPECT_TRUE(buf->isSharedOne());
+  EXPECT_FALSE(buf1->isSharedOne());
+  append(buf1, "world");
+
+  size_t tailroom2 = buf1->tailroom();
+  auto buf2 = buf1->maybeSplitTail();
+  EXPECT_EQ(buf1->tailroom(), 0);
+  EXPECT_EQ(buf2->tailroom(), tailroom2);
+  EXPECT_EQ(
+      reinterpret_cast<const void*>(buf1->bufferEnd()),
+      reinterpret_cast<const void*>(buf2->buffer()));
+  // This maybeSplitTail() doesn't make buf1 shared because buf is the original
+  // owner, so buf2 refers to it as well.
+  EXPECT_FALSE(buf1->isSharedOne());
+  EXPECT_FALSE(buf2->isSharedOne());
+  append(buf2, "!");
+
+  buf = {};
+  EXPECT_EQ(buf1->to<std::string>(), "world");
+  buf1 = {};
+  EXPECT_EQ(buf2->to<std::string>(), "!");
+
+  // The original buffer is gone, but we can continue splitting its tail.
+  auto buf3 = buf2->maybeSplitTail();
+  append(buf3, "!!!1");
+}
+
+TEST(IOBuf, FromString) {
+  EXPECT_EQ(folly::IOBuf::fromString("")->toString(), "");
+  EXPECT_EQ(folly::IOBuf::fromString("test")->toString(), "test");
+  auto longStr = std::string(1000, '0');
+  EXPECT_EQ(folly::IOBuf::fromString(longStr)->toString(), longStr);
+}
+
+#if FOLLY_HAS_MEMORY_RESOURCE
+
+TEST(IOBuf, WithMemoryResource) {
+  struct FakeMemoryResource : std::pmr::memory_resource {
+    void* do_allocate(
+        std::size_t bytes, std::size_t /*  alignment */) override {
+      auto p = malloc(bytes);
+      CHECK(active.try_emplace(p, bytes).second);
+      return p;
+    }
+
+    void do_deallocate(
+        void* p, std::size_t bytes, std::size_t /* alignment */) override {
+      auto it = active.find(p);
+      CHECK(it != active.end()) << active.size();
+      CHECK_EQ(it->second, bytes);
+      active.erase(it);
+      free(p);
+    }
+
+    bool do_is_equal(
+        const memory_resource& /* other */) const noexcept override {
+      LOG(FATAL) << "Not implemented";
+    }
+
+    std::unordered_map<void*, size_t> active;
+  };
+
+  FakeMemoryResource mr;
+  const auto makeBuf = [&](size_t size) {
+    uint8_t* data = static_cast<uint8_t*>(malloc(size));
+    return IOBuf::takeOwnership(&mr, data, size, 0, 0);
+  };
+  auto buf = makeBuf(10);
+  EXPECT_EQ(mr.active.size(), 1);
+  buf->appendToChain(makeBuf(20));
+  EXPECT_EQ(mr.active.size(), 2);
+
+  {
+    // Cloning without passing a memory_resource uses the system allocator.
+    auto clone = buf->clone();
+    EXPECT_EQ(mr.active.size(), 2);
+    clone.reset();
+    EXPECT_EQ(mr.active.size(), 2);
+  }
+
+  {
+    auto clone = buf->cloneOne(&mr);
+    EXPECT_EQ(mr.active.size(), 3);
+  }
+  EXPECT_EQ(mr.active.size(), 2);
+
+  {
+    auto clone = buf->clone(&mr);
+    EXPECT_EQ(mr.active.size(), 4);
+  }
+  EXPECT_EQ(mr.active.size(), 2);
+
+  buf.reset();
+  EXPECT_EQ(mr.active.size(), 0);
+}
+
+#endif /* FOLLY_HAS_MEMORY_RESOURCE */

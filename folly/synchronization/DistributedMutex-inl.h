@@ -400,7 +400,9 @@ class RequestWithReturn {
     // note that the invariant here is that this function is only called if the
     // requesting thread had it's critical section combined, and the value_
     // member constructed through detach()
-    SCOPE_EXIT { value_.~ReturnType(); };
+    SCOPE_EXIT {
+      value_.~ReturnType();
+    };
     return std::move(value_);
   }
 
@@ -870,8 +872,9 @@ std::uint64_t publish(
   // timestamp to force the waking thread to skip us
   auto now = ((waitMode == kCombineWaiting) && !spins)
       ? std::numeric_limits<CpuTicks>::max()
-      : (elapsed < kMaxSpinTime) ? current
-                                 : CpuTicks{0};
+      : (elapsed < kMaxSpinTime)
+      ? current
+      : CpuTicks{0};
   // the wait mode information is published in the bottom 8 bits of the futex
   // word, the rest contains time information as computed above.  Overflows are
   // not really a correctness concern because time publishing is only a
@@ -1054,7 +1057,9 @@ auto DistributedMutex<Atomic, TimePublishing>::lock_combine(Func func)
     // to avoid having to play a return-value dance when the combinable
     // returns void, we use a scope exit to perform the unlock after the
     // function return has been processed
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 
@@ -1087,7 +1092,9 @@ DistributedMutex<Atomic, TimePublishing>::try_lock_combine_for(
     const std::chrono::duration<Rep, Period>& duration, Func func) {
   auto state = try_lock_for(duration);
   if (state) {
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 
@@ -1101,7 +1108,9 @@ DistributedMutex<Atomic, TimePublishing>::try_lock_combine_until(
     const std::chrono::time_point<Clock, Duration>& deadline, Func func) {
   auto state = try_lock_until(deadline);
   if (state) {
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 
@@ -1310,9 +1319,9 @@ CombineFunction loadTask(Waiter* current, std::uintptr_t value) {
 }
 
 template <typename Waiter>
-FOLLY_COLD void transferCurrentException(Waiter* waiter) {
-  DCHECK(std::current_exception());
-  new (&waiter->storage_) std::exception_ptr{std::current_exception()};
+[[FOLLY_ATTR_GNU_COLD]] void transferCurrentException(Waiter* waiter) {
+  DCHECK(current_exception());
+  new (&waiter->storage_) std::exception_ptr{current_exception()};
   waiter->futex_.store(kExceptionOccurred, std::memory_order_release);
 }
 

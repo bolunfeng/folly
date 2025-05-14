@@ -22,7 +22,6 @@
 #include <folly/Conv.h>
 #include <folly/SocketAddress.h>
 #include <folly/String.h>
-#include <folly/experimental/TestUtil.h>
 #include <folly/io/IOBuf.h>
 #include <folly/io/async/AsyncTimeout.h>
 #include <folly/io/async/AsyncUDPServerSocket.h>
@@ -31,6 +30,7 @@
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Sockets.h>
+#include <folly/testing/TestUtil.h>
 
 using folly::AsyncTimeout;
 using folly::AsyncUDPServerSocket;
@@ -66,12 +66,11 @@ class UDPAcceptor : public AsyncUDPServerSocket::Callback {
       bool truncated,
       OnDataAvailableParams) noexcept override {
     lastClient_ = client;
-    lastMsg_ = data->clone()->moveToFbString().toStdString();
+    lastMsg_ = data->to<std::string>();
 
     auto len = data->computeChainDataLength();
-    VLOG(4) << "Worker " << n_ << " read " << len << " bytes "
-            << "(trun:" << truncated << ") from " << client.describe() << " - "
-            << lastMsg_;
+    VLOG(4) << "Worker " << n_ << " read " << len << " bytes " << "(trun:"
+            << truncated << ") from " << client.describe() << " - " << lastMsg_;
 
     sendPong();
   }
@@ -197,6 +196,7 @@ class UDPClient : private AsyncUDPSocket::ReadCallback, private AsyncTimeout {
     server_ = server;
     socket_ = std::make_unique<AsyncUDPSocket>(evb_);
     socket_->setRecvTos(recvTos_);
+    ASSERT_EQ(socket_->getRecvTos(), recvTos_);
 
     try {
       if (bindSocket_ == BindSocket::YES) {
@@ -371,13 +371,18 @@ class UDPNotifyClient : public UDPClient {
       if (errno != EAGAIN || errno != EWOULDBLOCK) {
         onReadError(folly::AsyncSocketException(
             folly::AsyncSocketException::NETWORK_ERROR, "error"));
-        return;
       }
-    }
-    SocketAddress addr;
-    addr.setFromSockaddr(rawAddr, addrLen);
+    } else {
+      // Datagram sockets in various domains (e.g., the UNIX and Internet
+      // domains) permit zero-length datagrams.  When such a datagram is
+      // received, the return value is 0.
+      auto numBytesRecv{static_cast<size_t>(ret)};
 
-    onDataAvailable(addr, size_t(read), false, OnDataAvailableParams());
+      SocketAddress addr;
+      addr.setFromSockaddr(rawAddr, addrLen);
+
+      onDataAvailable(addr, numBytesRecv, false, OnDataAvailableParams());
+    }
   }
 
   void onRecvMmsg(AsyncUDPSocket& sock) {
@@ -444,8 +449,9 @@ class AsyncSocketIntegrationTest : public Test {
         &sevb, folly::SocketAddress("127.0.0.1", 0), 4);
 
     // Start event loop in a separate thread
-    serverThread =
-        std::make_unique<std::thread>([this]() { sevb.loopForever(); });
+    serverThread = std::make_unique<std::thread>([this]() {
+      sevb.loopForever();
+    });
 
     // Wait for event loop to start
     sevb.waitUntilRunning();
@@ -557,8 +563,9 @@ AsyncSocketIntegrationTest::performPingPongNotifyMmsgTest(
   cevb.waitUntilRunning();
 
   // Send ping
-  cevb.runInEventBaseThread(
-      [&]() { client->start(writeAddress, numMsgs, true); });
+  cevb.runInEventBaseThread([&]() {
+    client->start(writeAddress, numMsgs, true);
+  });
 
   // Wait for client to finish
   clientThread.join();
@@ -906,10 +913,11 @@ TEST_F(AsyncUDPSocketTest, TestDetachAttach) {
         *len = 1024;
       }));
   EXPECT_CALL(readCb, onDataAvailable_(_, _, _, _))
-      .WillRepeatedly(Invoke([&](const folly::SocketAddress&,
-                                 size_t,
-                                 bool,
-                                 OnDataAvailableParams) { packetsRecvd++; }));
+      .WillRepeatedly(Invoke(
+          [&](const folly::SocketAddress&,
+              size_t,
+              bool,
+              OnDataAvailableParams) { packetsRecvd++; }));
   socket_->resumeRead(&readCb);
   writeSocket->write(socket_->address(), folly::IOBuf::copyBuffer("hello"));
   while (packetsRecvd != 1) {
@@ -922,9 +930,9 @@ TEST_F(AsyncUDPSocketTest, TestDetachAttach) {
   evb2.runInEventBaseThreadAndWait([&] { socket_->attachEventBase(&evb2); });
   writeSocket->write(socket_->address(), folly::IOBuf::copyBuffer("hello"));
   auto now = std::chrono::steady_clock::now();
-  while (packetsRecvd != 2 ||
-         std::chrono::steady_clock::now() <
-             now + std::chrono::milliseconds(10)) {
+  while (
+      packetsRecvd != 2 ||
+      std::chrono::steady_clock::now() < now + std::chrono::milliseconds(10)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   evb2.runInEventBaseThread([&] {
@@ -1220,8 +1228,8 @@ MATCHER_P3(AllHaveCmsgsAndNontrivialCmsgs, cmsgs, nontrivialCmsgs, count, "") {
 
 TEST(MatcherTest, AllHaveCmsgsTest) {
 #ifdef FOLLY_HAVE_MSG_ERRQUEUE
-  size_t count = 2;
-  size_t controlSize = 2;
+  constexpr size_t count = 2;
+  constexpr size_t controlSize = 2;
   mmsghdr msgvec[count];
   char control[count * controlSize * CMSG_SPACE(sizeof(uint16_t))];
   memset(control, 0, sizeof(control));

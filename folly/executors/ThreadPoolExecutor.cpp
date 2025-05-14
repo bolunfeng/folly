@@ -164,8 +164,9 @@ void ThreadPoolExecutor::runTask(const ThreadPtr& thread, Task&& task) {
       taskInfo.waitTime.count(),
       taskInfo.runTime.count(),
       taskInfo.taskId);
-  forEachTaskObserver(
-      [&](auto& observer) { observer.taskProcessed(taskInfo); });
+  forEachTaskObserver([&](auto& observer) {
+    observer.taskProcessed(taskInfo);
+  });
 
   thread->idle.store(true, std::memory_order_relaxed);
   thread->lastActiveTime.store(
@@ -368,8 +369,9 @@ void ThreadPoolExecutor::subscribeToTaskStats(TaskStatsCallback cb) {
         : cob_(std::move(cob)) {}
 
     void taskProcessed(const ProcessedTaskInfo& info) noexcept override {
-      invokeCatchingExns(
-          "ThreadPoolExecutor: task stats callback", [&] { cob_(info); });
+      invokeCatchingExns("ThreadPoolExecutor: task stats callback", [&] {
+        cob_(info);
+      });
     }
 
    private:
@@ -394,7 +396,7 @@ void ThreadPoolExecutor::addTaskObserver(
 
 BlockingQueueAddResult ThreadPoolExecutor::StoppedThreadQueue::add(
     ThreadPoolExecutor::ThreadPtr item) {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::lock_guard guard(mutex_);
   queue_.push(std::move(item));
   return sem_.post();
 }
@@ -402,7 +404,7 @@ BlockingQueueAddResult ThreadPoolExecutor::StoppedThreadQueue::add(
 ThreadPoolExecutor::ThreadPtr ThreadPoolExecutor::StoppedThreadQueue::take() {
   while (true) {
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::lock_guard guard(mutex_);
       if (!queue_.empty()) {
         auto item = std::move(queue_.front());
         queue_.pop();
@@ -418,7 +420,7 @@ ThreadPoolExecutor::StoppedThreadQueue::try_take_for(
     std::chrono::milliseconds time) {
   while (true) {
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::lock_guard guard(mutex_);
       if (!queue_.empty()) {
         auto item = std::move(queue_.front());
         queue_.pop();
@@ -432,7 +434,7 @@ ThreadPoolExecutor::StoppedThreadQueue::try_take_for(
 }
 
 size_t ThreadPoolExecutor::StoppedThreadQueue::size() {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::lock_guard guard(mutex_);
   return queue_.size();
 }
 

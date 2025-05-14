@@ -19,8 +19,8 @@
 #include <atomic>
 
 #include <folly/Portability.h>
+#include <folly/coro/Coroutine.h>
 #include <folly/detail/Futex.h>
-#include <folly/experimental/coro/Coroutine.h>
 #include <folly/io/async/HHWheelTimer.h>
 
 namespace folly {
@@ -289,7 +289,7 @@ class BatonAwaitableWaiter : public Baton::Waiter {
 } // namespace detail
 
 inline detail::BatonAwaitableWaiter /* implicit */ operator co_await(
-    Baton& baton) {
+    Baton & baton) {
   return detail::BatonAwaitableWaiter(baton);
 }
 #endif

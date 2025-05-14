@@ -94,7 +94,9 @@ template <class String>
 void randomString(String* toFill, unsigned int maxSize = 1000) {
   assert(toFill);
   toFill->resize(random(0, maxSize));
-  FOR_EACH (i, *toFill) { *i = random('a', 'z'); }
+  FOR_EACH (i, *toFill) {
+    *i = random('a', 'z');
+  }
 }
 
 template <class String, class Integral>
@@ -220,7 +222,9 @@ void clause11_21_4_2_j(String& test) {
   auto size = random(0, 2000);
   String s(size, '\0');
   EXPECT_EQ(s.size(), size);
-  FOR_EACH_RANGE (i, 0, s.size()) { s[i] = random('a', 'z'); }
+  FOR_EACH_RANGE (i, 0, s.size()) {
+    s[i] = random('a', 'z');
+  }
   test = s;
 }
 template <class String>
@@ -229,7 +233,9 @@ void clause11_21_4_2_k(String& test) {
   auto size = random(0, 2000);
   String s(size, '\0');
   EXPECT_EQ(s.size(), size);
-  FOR_EACH_RANGE (i, 0, s.size()) { s[i] = random('a', 'z'); }
+  FOR_EACH_RANGE (i, 0, s.size()) {
+    s[i] = random('a', 'z');
+  }
   test = std::move(s);
   if (std::is_same<String, fbstring>::value) {
     EXPECT_LE(s.size(), 128);
@@ -325,6 +331,11 @@ void clause11_21_4_5(String& test) {
 
 template <class String>
 void clause11_21_4_6_1(String& test) {
+  using string_view_type = std::basic_string_view<
+      typename String::value_type,
+      typename String::traits_type>;
+  auto orig = test;
+
   // 21.3.5 modifiers (+=)
   String test1;
   randomString(&test1);
@@ -334,7 +345,9 @@ void clause11_21_4_6_1(String& test) {
   auto len = test.size();
   test += test1;
   EXPECT_EQ(test.size(), test1.size() + len);
-  FOR_EACH_RANGE (i, 0, test1.size()) { EXPECT_EQ(test[len + i], test1[i]); }
+  FOR_EACH_RANGE (i, 0, test1.size()) {
+    EXPECT_EQ(test[len + i], test1[i]);
+  }
   // aliasing modifiers
   String test2 = test;
   auto dt = test2.data();
@@ -376,10 +389,23 @@ void clause11_21_4_6_1(String& test) {
   // initializer_list
   initializer_list<typename String::value_type> il{'a', 'b', 'c'};
   test += il;
+  // string_view
+  auto testsv = orig;
+  testsv += string_view_type{orig};
+  EXPECT_EQ(orig + orig, testsv);
+  // like string_view
+  auto testlsv = orig;
+  testlsv += invocable_to([&] { return string_view_type{orig}; });
+  EXPECT_EQ(orig + orig, testlsv);
 }
 
 template <class String>
 void clause11_21_4_6_2(String& test) {
+  using string_view_type = std::basic_string_view<
+      typename String::value_type,
+      typename String::traits_type>;
+  auto orig = test;
+
   // 21.3.5 modifiers (append, push_back)
   String s;
 
@@ -407,6 +433,14 @@ void clause11_21_4_6_2(String& test) {
   // initializer_list
   initializer_list<typename String::value_type> il{'a', 'b', 'c'};
   test.append(il);
+  // string_view
+  auto testsv = orig;
+  testsv.append(string_view_type{orig});
+  EXPECT_EQ(orig + orig, testsv);
+  // like string_view
+  auto testlsv = orig;
+  testlsv.append(folly::invocable_to([&] { return string_view_type{orig}; }));
+  EXPECT_EQ(orig + orig, testlsv);
 }
 
 template <class String>
@@ -1124,9 +1158,9 @@ TEST(FBString, testAllClauses) {
       f_string(r);
       rng = RandomT(localSeed);
       f_fbstring(c);
-      EXPECT_EQ(r, c) << "Lengths: " << r.size() << " vs. " << c.size()
-                      << "\nReference: '" << r << "'"
-                      << "\nActual:    '" << c.data()[0] << "'";
+      EXPECT_EQ(r, c)
+          << "Lengths: " << r.size() << " vs. " << c.size() << "\nReference: '"
+          << r << "'" << "\nActual:    '" << c.data()[0] << "'";
 #if FOLLY_HAVE_WCHAR_SUPPORT
       rng = RandomT(localSeed);
       f_wfbstring(wc);

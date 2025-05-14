@@ -31,7 +31,7 @@
 #include <folly/concurrency/AtomicSharedPtr.h>
 #include <folly/concurrency/CoreCachedSharedPtr.h>
 #include <folly/concurrency/ThreadCachedSynchronized.h>
-#include <folly/experimental/ReadMostlySharedPtr.h>
+#include <folly/concurrency/memory/ReadMostlySharedPtr.h>
 #include <folly/portability/GTest.h>
 
 namespace {
@@ -321,7 +321,7 @@ BENCHMARK_MULTI(AtomicCoreCachedSharedPtrSingleThreadReset) {
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   auto ret = RUN_ALL_TESTS();
   if (ret == 0 && FLAGS_benchmark) {

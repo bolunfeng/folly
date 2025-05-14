@@ -24,7 +24,7 @@
 
 #include <folly/MPMCQueue.h>
 #include <folly/ScopeGuard.h>
-#include <folly/experimental/EventCount.h>
+#include <folly/synchronization/EventCount.h>
 
 namespace folly {
 namespace gen {
@@ -173,15 +173,16 @@ class Parallel : public Operator<Parallel<Ops>> {
           decltype(std::declval<Ops>().compose(Empty<InputDecayed&&>())),
       class Output = typename Composed::ValueType,
       class OutputDecayed = typename std::decay<Output>::type>
-  class Generator : public GenImpl<
-                        OutputDecayed&&,
-                        Generator<
-                            Input,
-                            Source,
-                            InputDecayed,
-                            Composed,
-                            Output,
-                            OutputDecayed>> {
+  class Generator
+      : public GenImpl<
+            OutputDecayed&&,
+            Generator<
+                Input,
+                Source,
+                InputDecayed,
+                Composed,
+                Output,
+                OutputDecayed>> {
     Source source_;
     Ops ops_;
     size_t threads_;

@@ -28,6 +28,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <string>
 #include <type_traits>
 
 #include <glog/logging.h>
@@ -40,6 +41,7 @@
 #include <folly/detail/Iterators.h>
 #include <folly/lang/CheckedMath.h>
 #include <folly/lang/Ordering.h>
+#include <folly/memory/MemoryResource.h>
 #include <folly/portability/SysUio.h>
 #include <folly/synchronization/MicroSpinLock.h>
 
@@ -52,6 +54,10 @@ FOLLY_GNU_DISABLE_WARNING("-Wpragmas")
 // Ignore documentation warnings, to enable overloads to share documentation
 // with differing parameters
 FOLLY_GNU_DISABLE_WARNING("-Wdocumentation")
+
+namespace std::pmr {
+class memory_resource;
+}
 
 namespace folly {
 
@@ -69,7 +75,7 @@ struct IsUniquePtrToSL<std::unique_ptr<T, D>> : std::is_standard_layout<T> {};
  * API Details
  * -----------
  *
- *  - The buffer is not neccesarily full of meaningful bytes - there may be
+ *  - The buffer is not necessarily full of meaningful bytes - there may be
  *    uninitialized bytes before and after the central "valid" range of data.
  *  - Buffers are refcounted, and can be shared by multiple IOBuf objects.
  *    - If you ever write to an IOBuf, first use unshare() to get a unique copy.
@@ -118,7 +124,7 @@ struct IsUniquePtrToSL<std::unique_ptr<T, D>> : std::is_standard_layout<T> {};
  * data() and tail() methods on each IOBuf may point to a different segment of
  * the data.  However, the buffer() and bufferEnd() methods will point to the
  * same location for all IOBufs sharing the same underlying buffer, unless the
- * tail was trimmed with trimWritableTail().
+ * tail was resized by trimWritableTail() or maybeSplitTail().
  *
  *           +-----------+     +---------+
  *           |  IOBuf 1  |     | IOBuf 2 |
@@ -449,7 +455,7 @@ class IOBuf {
       FreeFunction freeFn = nullptr,
       void* userData = nullptr,
       bool freeOnError = true) {
-    return takeOwnership(
+    return takeOwnershipImpl(
         buf,
         capacity,
         0,
@@ -473,7 +479,7 @@ class IOBuf {
       FreeFunction freeFn = nullptr,
       void* userData = nullptr,
       bool freeOnError = true) {
-    return takeOwnership(
+    return takeOwnershipImpl(
         buf,
         capacity,
         0,
@@ -510,7 +516,7 @@ class IOBuf {
       FreeFunction freeFn = nullptr,
       void* userData = nullptr,
       bool freeOnError = true) {
-    return takeOwnership(
+    return takeOwnershipImpl(
         buf,
         capacity,
         offset,
@@ -534,7 +540,7 @@ class IOBuf {
       std::size_t offset,
       std::size_t length,
       bool freeOnError = true) {
-    return takeOwnership(
+    return takeOwnershipImpl(
         buf,
         capacity,
         offset,
@@ -775,14 +781,14 @@ class IOBuf {
    *
    * @methodset Chaining
    */
-  bool empty() const;
+  bool empty() const noexcept;
 
   /**
    * Get the pointer to the start of the data.
    *
    * @methodset Access
    */
-  const uint8_t* data() const { return data_; }
+  const uint8_t* data() const noexcept { return data_; }
 
   /**
    * Get a writable pointer to the start of the data.
@@ -792,14 +798,14 @@ class IOBuf {
    *
    * @methodset Access
    */
-  uint8_t* writableData() { return data_; }
+  uint8_t* writableData() noexcept { return data_; }
 
   /**
    * Get the pointer to the end of the data.
    *
    * @methodset Access
    */
-  const uint8_t* tail() const { return data_ + length_; }
+  const uint8_t* tail() const noexcept { return data_ + length_; }
 
   /**
    * Get a writable pointer to the end of the data.
@@ -809,7 +815,7 @@ class IOBuf {
    *
    * @methodset Access
    */
-  uint8_t* writableTail() { return data_ + length_; }
+  uint8_t* writableTail() noexcept { return data_ + length_; }
 
   /**
    * Get the size of the data for this individual IOBuf in the chain.
@@ -818,7 +824,7 @@ class IOBuf {
    *
    * @methodset Buffer Capacity
    */
-  std::size_t length() const { return length_; }
+  std::size_t length() const noexcept { return length_; }
 
   /**
    * Get the amount of head room.
@@ -827,7 +833,9 @@ class IOBuf {
    *
    * @methodset Buffer Capacity
    */
-  std::size_t headroom() const { return std::size_t(data_ - buffer()); }
+  std::size_t headroom() const noexcept {
+    return std::size_t(data_ - buffer());
+  }
 
   /**
    * Get the amount of tail room.
@@ -836,7 +844,9 @@ class IOBuf {
    *
    * @methodset Buffer Capacity
    */
-  std::size_t tailroom() const { return std::size_t(bufferEnd() - tail()); }
+  std::size_t tailroom() const noexcept {
+    return std::size_t(bufferEnd() - tail());
+  }
 
   /**
    * Get the pointer to the start of the buffer.
@@ -847,7 +857,7 @@ class IOBuf {
    *
    * @methodset Access
    */
-  const uint8_t* buffer() const { return buf_; }
+  const uint8_t* buffer() const noexcept { return buf_; }
 
   /**
    * Get a writable pointer to the start of the buffer.
@@ -857,7 +867,7 @@ class IOBuf {
    *
    * @methodset Access
    */
-  uint8_t* writableBuffer() { return buf_; }
+  uint8_t* writableBuffer() noexcept { return buf_; }
 
   /**
    * Get the pointer to the end of the buffer.
@@ -868,7 +878,7 @@ class IOBuf {
    *
    * @methodset Access
    */
-  const uint8_t* bufferEnd() const { return buf_ + capacity_; }
+  const uint8_t* bufferEnd() const noexcept { return buf_ + capacity_; }
 
   /**
    * Get the total size of the buffer.
@@ -878,25 +888,25 @@ class IOBuf {
    *
    * @methodset Buffer Capacity
    */
-  std::size_t capacity() const { return capacity_; }
+  std::size_t capacity() const noexcept { return capacity_; }
 
   /**
    * Get a pointer to the next IOBuf in this chain.
    *
    * @methodset Chaining
    */
-  IOBuf* next() { return next_; }
+  IOBuf* next() noexcept { return next_; }
   /// @copydoc next()
-  const IOBuf* next() const { return next_; }
+  const IOBuf* next() const noexcept { return next_; }
 
   /**
    * Get a pointer to the previous IOBuf in this chain.
    *
    * @methodset Chaining
    */
-  IOBuf* prev() { return prev_; }
+  IOBuf* prev() noexcept { return prev_; }
   /// @copydoc prev
-  const IOBuf* prev() const { return prev_; }
+  const IOBuf* prev() const noexcept { return prev_; }
 
   /**
    * Shift the data forwards in the buffer.
@@ -918,7 +928,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void advance(std::size_t amount) {
+  void advance(std::size_t amount) noexcept {
     // In debug builds, assert if there is a problem.
     assert(amount <= tailroom());
 
@@ -947,7 +957,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void retreat(std::size_t amount) {
+  void retreat(std::size_t amount) noexcept {
     // In debug builds, assert if there is a problem.
     assert(amount <= headroom());
 
@@ -972,7 +982,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void prepend(std::size_t amount) {
+  void prepend(std::size_t amount) noexcept {
     DCHECK_LE(amount, headroom());
     data_ -= amount;
     length_ += amount;
@@ -993,7 +1003,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void append(std::size_t amount) {
+  void append(std::size_t amount) noexcept {
     DCHECK_LE(amount, tailroom());
     length_ += amount;
   }
@@ -1012,7 +1022,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void trimStart(std::size_t amount) {
+  void trimStart(std::size_t amount) noexcept {
     DCHECK_LE(amount, length_);
     data_ += amount;
     length_ -= amount;
@@ -1032,7 +1042,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void trimEnd(std::size_t amount) {
+  void trimEnd(std::size_t amount) noexcept {
     DCHECK_LE(amount, length_);
     length_ -= amount;
   }
@@ -1048,7 +1058,7 @@ class IOBuf {
    *
    * @methodset Shifting
    */
-  void trimWritableTail(std::size_t amount) {
+  void trimWritableTail(std::size_t amount) noexcept {
     DCHECK_LE(amount, tailroom());
     capacity_ -= amount;
   }
@@ -1059,7 +1069,7 @@ class IOBuf {
    * @post  data() == buffer()
    * @post  length() == 0
    */
-  void clear() {
+  void clear() noexcept {
     data_ = writableBuffer();
     length_ = 0;
   }
@@ -1108,7 +1118,7 @@ class IOBuf {
    *
    * @methodset Chaining
    */
-  bool isChained() const {
+  bool isChained() const noexcept {
     assert((next_ == this) == (prev_ == this));
     return next_ != this;
   }
@@ -1122,7 +1132,7 @@ class IOBuf {
    *
    * @methodset Chaining
    */
-  size_t countChainElements() const;
+  size_t countChainElements() const noexcept;
 
   /**
    * Get the length of all the data in this IOBuf chain.
@@ -1131,7 +1141,7 @@ class IOBuf {
    *
    * @methodset Chaining
    */
-  std::size_t computeChainDataLength() const;
+  std::size_t computeChainDataLength() const noexcept;
 
   /**
    * Get the capacity all IOBufs in the chain.
@@ -1140,7 +1150,7 @@ class IOBuf {
    *
    * @methodset Chaining
    */
-  std::size_t computeChainCapacity() const;
+  std::size_t computeChainCapacity() const noexcept;
 
   /**
    * Append another IOBuf chain to the end of this chain.
@@ -1301,7 +1311,7 @@ class IOBuf {
    *
    * @methodset Buffer Management
    */
-  bool isShared() const {
+  bool isShared() const noexcept {
     const IOBuf* current = this;
     while (true) {
       if (current->isSharedOne()) {
@@ -1325,8 +1335,7 @@ class IOBuf {
    * @methodset Buffer Management
    */
   void* getUserData() const noexcept {
-    SharedInfo* info = sharedInfo();
-    return info ? info->userData : nullptr;
+    return sharedInfo_ ? sharedInfo_->userData : nullptr;
   }
 
   /**
@@ -1340,8 +1349,7 @@ class IOBuf {
    * @methodset Buffer Management
    */
   FreeFunction getFreeFn() const noexcept {
-    SharedInfo* info = sharedInfo();
-    return info ? info->freeFn : nullptr;
+    return sharedInfo_ ? sharedInfo_->freeFn : nullptr;
   }
 
   /**
@@ -1355,14 +1363,14 @@ class IOBuf {
    */
   template <typename Observer>
   bool appendSharedInfoObserver(Observer&& observer) {
-    SharedInfo* info = sharedInfo();
+    SharedInfo* info = sharedInfo_;
     if (!info) {
       return false;
     }
 
     auto* entry =
         new SharedInfoObserverEntry<Observer>(std::forward<Observer>(observer));
-    std::lock_guard<MicroSpinLock> guard(info->observerListLock);
+    std::lock_guard guard(info->observerListLock);
     if (!info->observerListHead) {
       info->observerListHead = entry;
     } else {
@@ -1386,7 +1394,7 @@ class IOBuf {
    *
    * @methodset Buffer Management
    */
-  bool isManaged() const {
+  bool isManaged() const noexcept {
     const IOBuf* current = this;
     while (true) {
       if (!current->isManagedOne()) {
@@ -1411,7 +1419,7 @@ class IOBuf {
    *
    * @methodset Buffer Management
    */
-  bool isManagedOne() const noexcept { return sharedInfo(); }
+  bool isManagedOne() const noexcept { return sharedInfo_ != nullptr; }
 
   /**
    * Inconsistently get the reference count.
@@ -1430,7 +1438,7 @@ class IOBuf {
    *
    * @methodset Buffer Management
    */
-  uint32_t approximateShareCountOne() const;
+  uint32_t approximateShareCountOne() const noexcept;
 
   /**
    * Check if the buffer is shared.
@@ -1448,15 +1456,15 @@ class IOBuf {
    */
   bool isSharedOne() const noexcept {
     // If this is a user-owned buffer, it is always considered shared
-    if (FOLLY_UNLIKELY(!sharedInfo())) {
+    if (FOLLY_UNLIKELY(!sharedInfo_)) {
       return true;
     }
 
-    if (FOLLY_UNLIKELY(sharedInfo()->externallyShared)) {
+    if (FOLLY_UNLIKELY(sharedInfo_->externallyShared)) {
       return true;
     }
 
-    return sharedInfo()->refcount.load(std::memory_order_acquire) > 1;
+    return sharedInfo_->refcount.load(std::memory_order_acquire) > 1;
   }
 
   /**
@@ -1539,9 +1547,8 @@ class IOBuf {
    * @methodset Buffer Management
    */
   void markExternallySharedOne() {
-    SharedInfo* info = sharedInfo();
-    if (info) {
-      info->externallyShared = true;
+    if (sharedInfo_) {
+      sharedInfo_->externallyShared = true;
     }
   }
 
@@ -1673,7 +1680,7 @@ class IOBuf {
    *
    * @methodset Makers
    */
-  std::unique_ptr<IOBuf> clone() const;
+  std::unique_ptr<IOBuf> clone() const { return cloneImpl(nullptr); }
 
   /**
    * @copydoc clone()
@@ -1689,7 +1696,7 @@ class IOBuf {
    *
    * @methodset Makers
    */
-  std::unique_ptr<IOBuf> cloneOne() const;
+  std::unique_ptr<IOBuf> cloneOne() const { return cloneOneImpl(nullptr); }
 
   /**
    * @copydoc cloneOne()
@@ -1766,6 +1773,18 @@ class IOBuf {
   void cloneOneInto(IOBuf& other) const { other = cloneOneAsValue(); }
 
   /**
+   * Returns a new IOBuf whose buffer is this buffer's tail. The latter is
+   * trimmed to 0 to relinquish ownership of it. The returned IOBuf is unshared,
+   * and it holds a shared reference to the IOBuf that originally owned the
+   * buffer, extending its lifetime.
+   *
+   * This method is best-effort and allowed to fail if the operation is not
+   * possible (for example, if the buffer is shared) or inefficient. In these
+   * cases, nullptr is returned and this IOBuf is unchanged.
+   */
+  std::unique_ptr<IOBuf> maybeSplitTail();
+
+  /**
    * Append the chain data into the provided container.
    *
    * This is meant to be used with containers such as std::string or
@@ -1778,16 +1797,32 @@ class IOBuf {
   void appendTo(Container& container) const;
 
   /**
-   * Dump the chain data into a container.
+   * Returns a container containing the chain data.
    *
    * @copydetails appendTo(Container&) const
    *
    * @tparam Container  The type of container to return.
    *
-   * @returns  A Container whose data equals the coalseced data of this chain
+   * @returns  A Container whose data equals the coalesced data of this chain
    */
   template <class Container>
   Container to() const;
+
+  /**
+   * Convenience version of to<std::string>() that works when called
+   * on a dependent name in a template function without having to use
+   * the "template" keyword.
+   */
+  std::string toString() const { return to<std::string>(); }
+
+  /**
+   * Create an IOBuf from a std::string. Avoids copying the contents of the
+   * string, at the cost of an extra allocation.
+   */
+  static std::unique_ptr<IOBuf> fromString(std::unique_ptr<std::string>);
+  static std::unique_ptr<IOBuf> fromString(std::string s) {
+    return fromString(std::make_unique<std::string>(std::move(s)));
+  }
 
   /**
    * Get an iovector suitable for e.g. writev()
@@ -1877,6 +1912,62 @@ class IOBuf {
       FreeFunction freeFn = nullptr,
       void* userData = nullptr,
       bool freeOnError = true);
+
+#if FOLLY_HAS_MEMORY_RESOURCE
+
+  /**
+   * PMR support.
+   *
+   * These methods allow constructing IOBuf chains whose nodes are allocated
+   * using the provided memory resource. Aside from the use of
+   * std::pmr::memory_resource for allocating/deallocating the nodes, their
+   * semantics are equivalent to their non-PMR counterparts. Currently only a
+   * subset of IOBuf construction methods is implemented, enough to support the
+   * typical lifetime of an IOBuf chain: buffer can be externally allocated and
+   * wrapped with takeOwnership(), and cloned. More methods can be supported as
+   * needed.
+   *
+   * The thread-safety requirements of the provided memory_resource depend on
+   * the lifetime of the IOBufs. The allocate() method is only called in the
+   * context of the IOBuf method that accepts it; deallocate() is called when
+   * the IOBuf storage is eventually destroyed. Thus, in the common case where
+   * the chain is constructed in a single thread (which owns the
+   * memory_resource) and then handed off, it is sufficient that the
+   * memory_resource supports concurrent deallocate() calls, as different nodes
+   * in the chain may be destroyed by different threads.
+   *
+   * All the methods allow mr to be nullptr, which is equivalent to calling
+   * the non-PMR counterparts.
+   */
+
+  static std::unique_ptr<IOBuf> takeOwnership(
+      std::pmr::memory_resource* mr,
+      void* buf,
+      std::size_t capacity,
+      std::size_t offset,
+      std::size_t length,
+      FreeFunction freeFn = nullptr,
+      void* userData = nullptr,
+      bool freeOnError = true) {
+    return takeOwnershipImpl(
+        buf,
+        capacity,
+        offset,
+        length,
+        freeFn,
+        userData,
+        freeOnError,
+        TakeOwnershipOption::DEFAULT,
+        mr);
+  }
+  std::unique_ptr<IOBuf> clone(std::pmr::memory_resource* mr) const {
+    return cloneImpl(mr);
+  }
+  std::unique_ptr<IOBuf> cloneOne(std::pmr::memory_resource* mr) const {
+    return cloneOneImpl(mr);
+  }
+
+#endif /* FOLLY_HAS_MEMORY_RESOURCE */
 
   /**
    * Overridden operator new and delete.
@@ -1985,7 +2076,8 @@ class IOBuf {
 
  private:
   enum class TakeOwnershipOption { DEFAULT, STORE_SIZE };
-  static std::unique_ptr<IOBuf> takeOwnership(
+
+  static std::unique_ptr<IOBuf> takeOwnershipImpl(
       void* buf,
       std::size_t capacity,
       std::size_t offset,
@@ -1993,15 +2085,10 @@ class IOBuf {
       FreeFunction freeFn,
       void* userData,
       bool freeOnError,
-      TakeOwnershipOption option);
-
-  enum FlagsEnum : uintptr_t {
-    // Adding any more flags would not work on 32-bit architectures,
-    // as these flags are stashed in the least significant 2 bits of a
-    // max-align-aligned pointer.
-    kFlagFreeSharedInfo = 0x1,
-    kFlagMask = (1 << 2 /* least significant bits */) - 1,
-  };
+      TakeOwnershipOption option,
+      std::pmr::memory_resource* mr = nullptr);
+  std::unique_ptr<IOBuf> cloneImpl(std::pmr::memory_resource* mr) const;
+  std::unique_ptr<IOBuf> cloneOneImpl(std::pmr::memory_resource* mr) const;
 
   struct SharedInfoObserverEntryBase {
     SharedInfoObserverEntryBase* prev{this};
@@ -2031,10 +2118,17 @@ class IOBuf {
   };
 
   struct SharedInfo {
-    SharedInfo();
-    SharedInfo(FreeFunction fn, void* arg, bool hfs = false);
+    enum class StorageType : uint8_t {
+      kInvalid, // Sentinel value.
+      kAllocated,
+      kHeapFullStorage,
+      kExtBuffer,
+    };
 
-    static void releaseStorage(SharedInfo* info) noexcept;
+    SharedInfo(FreeFunction fn, void* arg, StorageType st);
+
+    static void releaseStorage(
+        IOBuf* parent, StorageType storageType, SharedInfo* info) noexcept;
 
     using ObserverCb = folly::FunctionRef<void(SharedInfoObserverEntryBase&)>;
     static void invokeAndDeleteEachObserver(
@@ -2042,18 +2136,27 @@ class IOBuf {
 
     // A pointer to a function to call to free the buffer when the refcount
     // hits 0.  If this is null, free() will be used instead.
-    FreeFunction freeFn;
-    void* userData;
+    FreeFunction freeFn{nullptr};
+    void* userData{nullptr};
     SharedInfoObserverEntryBase* observerListHead{nullptr};
-    std::atomic<uint32_t> refcount;
+    std::atomic<uint32_t> refcount{1};
     bool externallyShared{false};
-    bool useHeapFullStorage{false};
+    StorageType storageType = StorageType::kInvalid;
     MicroSpinLock observerListLock{0};
   };
+
   // Helper structs for use by operator new and delete
   struct HeapPrefix;
   struct HeapStorage;
   struct HeapFullStorage;
+
+  // Force inlining to allow optimizing away some branches in the common cases.
+  template <class StorageType>
+  FOLLY_ALWAYS_INLINE static std::pair<StorageType*, size_t> allocateStorage(
+      std::pmr::memory_resource* mr = nullptr, size_t additionalBuffer = 0);
+  static std::pmr::memory_resource* getMemoryResource(
+      const HeapStorage* storage);
+  static void freeStorage(HeapStorage* storage);
 
   /**
    * Create a new IOBuf pointing to an external buffer.
@@ -2065,7 +2168,7 @@ class IOBuf {
   struct InternalConstructor {}; // avoid conflicts
   IOBuf(
       InternalConstructor,
-      uintptr_t flagsAndSharedInfo,
+      SharedInfo* sharedInfo,
       uint8_t* buf,
       std::size_t capacity,
       uint8_t* data,
@@ -2098,8 +2201,7 @@ class IOBuf {
       uint8_t** bufReturn,
       SharedInfo** infoReturn,
       std::size_t* capacityReturn);
-  static void releaseStorage(HeapStorage* storage, uint16_t freeFlags) noexcept;
-  static void freeInternalBuf(void* buf, void* userData) noexcept;
+  static void decrementStorageRefcount(HeapStorage* storage) noexcept;
 
   /*
    * Member variables
@@ -2127,46 +2229,7 @@ class IOBuf {
   IOBuf* next_{this};
   IOBuf* prev_{this};
 
-  // Pack flags in least significant 2 bits, sharedInfo in the rest
-  uintptr_t flagsAndSharedInfo_{0};
-
-  static inline uintptr_t packFlagsAndSharedInfo(
-      uintptr_t flags, SharedInfo* info) noexcept {
-    uintptr_t uinfo = reinterpret_cast<uintptr_t>(info);
-    DCHECK_EQ(flags & ~kFlagMask, 0u);
-    DCHECK_EQ(uinfo & kFlagMask, 0u);
-    return flags | uinfo;
-  }
-
-  inline SharedInfo* sharedInfo() const noexcept {
-    return reinterpret_cast<SharedInfo*>(flagsAndSharedInfo_ & ~kFlagMask);
-  }
-
-  inline void setSharedInfo(SharedInfo* info) noexcept {
-    uintptr_t uinfo = reinterpret_cast<uintptr_t>(info);
-    DCHECK_EQ(uinfo & kFlagMask, 0u);
-    flagsAndSharedInfo_ = (flagsAndSharedInfo_ & kFlagMask) | uinfo;
-  }
-
-  inline uintptr_t flags() const noexcept {
-    return flagsAndSharedInfo_ & kFlagMask;
-  }
-
-  // flags_ are changed from const methods
-  inline void setFlags(uintptr_t flags) noexcept {
-    DCHECK_EQ(flags & ~kFlagMask, 0u);
-    flagsAndSharedInfo_ |= flags;
-  }
-
-  inline void clearFlags(uintptr_t flags) noexcept {
-    DCHECK_EQ(flags & ~kFlagMask, 0u);
-    flagsAndSharedInfo_ &= ~flags;
-  }
-
-  inline void setFlagsAndSharedInfo(
-      uintptr_t flags, SharedInfo* info) noexcept {
-    flagsAndSharedInfo_ = packFlagsAndSharedInfo(flags, info);
-  }
+  SharedInfo* sharedInfo_{nullptr};
 
   struct DeleterBase {
     virtual ~DeleterBase() {}
@@ -2303,10 +2366,11 @@ inline std::unique_ptr<IOBuf> IOBuf::maybeCopyBuffer(
   return copyBuffer(buf.data(), buf.size(), headroom, minTailroom);
 }
 
-class IOBuf::Iterator : public detail::IteratorFacade<
-                            IOBuf::Iterator,
-                            ByteRange const,
-                            std::forward_iterator_tag> {
+class IOBuf::Iterator
+    : public detail::IteratorFacade<
+          IOBuf::Iterator,
+          ByteRange const,
+          std::forward_iterator_tag> {
  public:
   // Note that IOBufs are stored as a circular list without a guard node,
   // so pos == end is ambiguous (it may mean "begin" or "end").  To solve

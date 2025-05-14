@@ -30,7 +30,7 @@
 #include <zstd.h>
 
 namespace folly {
-namespace io {
+namespace compression {
 namespace zstd {
 
 /**
@@ -86,7 +86,7 @@ std::unique_ptr<Codec> getCodec(Options options);
 std::unique_ptr<StreamCodec> getStreamCodec(Options options);
 
 } // namespace zstd
-} // namespace io
+} // namespace compression
 } // namespace folly
 
 #endif

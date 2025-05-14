@@ -17,6 +17,11 @@
 #include <folly/Conv.h>
 
 #include <array>
+#include <istream>
+
+#include <folly/lang/SafeAssert.h>
+
+#include <fast_float/fast_float.h>
 
 namespace folly {
 namespace detail {
@@ -337,64 +342,15 @@ Expected<bool, ConversionCode> str_to_bool(StringPiece* src) noexcept {
   return result;
 }
 
-/**
- * StringPiece to double, with progress information. Alters the
- * StringPiece parameter to munch the already-parsed characters.
- */
+/// Uses `fast_float::from_chars` to convert from string to an integer.
 template <class Tgt>
-Expected<Tgt, ConversionCode> str_to_floating(StringPiece* src) noexcept {
-  using namespace double_conversion;
-  static StringToDoubleConverter conv(
-      StringToDoubleConverter::ALLOW_TRAILING_JUNK |
-          StringToDoubleConverter::ALLOW_LEADING_SPACES,
-      0.0,
-      // return this for junk input string
-      std::numeric_limits<Tgt>::quiet_NaN(),
-      nullptr,
-      nullptr);
-
+Expected<Tgt, ConversionCode> str_to_floating_fast_float_from_chars(
+    StringPiece* src) noexcept {
   if (src->empty()) {
     return makeUnexpected(ConversionCode::EMPTY_INPUT_STRING);
   }
 
-  int length; // processed char count
-  auto result = std::is_same<Tgt, float>::value
-      ? conv.StringToFloat(src->data(), static_cast<int>(src->size()), &length)
-      : static_cast<Tgt>(conv.StringToDouble(
-            src->data(), static_cast<int>(src->size()), &length));
-
-  if (!std::isnan(result)) {
-    // If we get here with length = 0, the input string is empty.
-    // If we get here with result = 0.0, it's either because the string
-    // contained only whitespace, or because we had an actual zero value
-    // (with potential trailing junk). If it was only whitespace, we
-    // want to raise an error; length will point past the last character
-    // that was processed, so we need to check if that character was
-    // whitespace or not.
-    if (length == 0 ||
-        (result == 0.0 && std::isspace((*src)[size_t(length) - 1]))) {
-      return makeUnexpected(ConversionCode::EMPTY_INPUT_STRING);
-    }
-    if (length >= 2) {
-      const char* suffix = src->data() + length - 1;
-      // double_conversion doesn't update length correctly when there is an
-      // incomplete exponent specifier. Converting "12e-f-g" shouldn't consume
-      // any more than "12", but it will consume "12e-".
-
-      // "123-" should only parse "123"
-      if (*suffix == '-' || *suffix == '+') {
-        --suffix;
-        --length;
-      }
-      // "12e-f-g" or "12euro" should only parse "12"
-      if (*suffix == 'e' || *suffix == 'E') {
-        --length;
-      }
-    }
-    src->advance(size_t(length));
-    return Tgt(result);
-  }
-
+  // move through leading whitespace characters
   auto* e = src->end();
   auto* b = std::find_if_not(src->begin(), e, [](char c) {
     return (c >= '\t' && c <= '\r') || c == ' ';
@@ -402,60 +358,35 @@ Expected<Tgt, ConversionCode> str_to_floating(StringPiece* src) noexcept {
   if (b == e) {
     return makeUnexpected(ConversionCode::EMPTY_INPUT_STRING);
   }
-  auto size = size_t(e - b);
 
-  bool negative = false;
-  if (*b == '-') {
-    negative = true;
-    ++b;
-    --size;
-    if (size == 0) {
-      return makeUnexpected(ConversionCode::STRING_TO_FLOAT_ERROR);
-    }
-  }
-  assert(size > 0);
-
-  result = 0.0;
-
-  switch (tolower_ascii(*b)) {
-    case 'i':
-      if (size >= 3 && tolower_ascii(b[1]) == 'n' &&
-          tolower_ascii(b[2]) == 'f') {
-        if (size >= 8 && tolower_ascii(b[3]) == 'i' &&
-            tolower_ascii(b[4]) == 'n' && tolower_ascii(b[5]) == 'i' &&
-            tolower_ascii(b[6]) == 't' && tolower_ascii(b[7]) == 'y') {
-          b += 8;
-        } else {
-          b += 3;
-        }
-        result = std::numeric_limits<Tgt>::infinity();
-      }
-      break;
-
-    case 'n':
-      if (size >= 3 && tolower_ascii(b[1]) == 'a' &&
-          tolower_ascii(b[2]) == 'n') {
-        b += 3;
-        result = std::numeric_limits<Tgt>::quiet_NaN();
-      }
-      break;
-
-    default:
-      break;
-  }
-
-  if (result == 0.0) {
-    // All bets are off
+  Tgt result;
+  fast_float::parse_options options{
+      fast_float::chars_format::general |
+      fast_float::chars_format::allow_leading_plus};
+  auto [ptr, ec] = fast_float::from_chars_advanced(b, e, result, options);
+  bool isOutOfRange{ec == std::errc::result_out_of_range};
+  bool isOk{ec == std::errc()};
+  if (!isOk && !isOutOfRange) {
     return makeUnexpected(ConversionCode::STRING_TO_FLOAT_ERROR);
   }
 
-  if (negative) {
-    result = -result;
-  }
+  auto numMatchedChars = ptr - src->data();
+  src->advance(numMatchedChars);
+  return result;
+}
 
-  src->assign(b, e);
+template Expected<float, ConversionCode>
+str_to_floating_fast_float_from_chars<float>(StringPiece* src) noexcept;
+template Expected<double, ConversionCode>
+str_to_floating_fast_float_from_chars<double>(StringPiece* src) noexcept;
 
-  return Tgt(result);
+/**
+ * StringPiece to double, with progress information. Alters the
+ * StringPiece parameter to munch the already-parsed characters.
+ */
+template <class Tgt>
+Expected<Tgt, ConversionCode> str_to_floating(StringPiece* src) noexcept {
+  return detail::str_to_floating_fast_float_from_chars<Tgt>(src);
 }
 
 template Expected<float, ConversionCode> str_to_floating<float>(
@@ -489,8 +420,9 @@ class SignedValueHandler<T, true> {
   }
 
   ConversionCode overflow() {
-    return negative_ ? ConversionCode::NEGATIVE_OVERFLOW
-                     : ConversionCode::POSITIVE_OVERFLOW;
+    return negative_
+        ? ConversionCode::NEGATIVE_OVERFLOW
+        : ConversionCode::POSITIVE_OVERFLOW;
   }
 
   template <typename U>
@@ -713,8 +645,9 @@ Expected<Tgt, ConversionCode> str_to_integral(StringPiece* src) noexcept {
 
   if (FOLLY_UNLIKELY(!tmp.hasValue())) {
     return makeUnexpected(
-        tmp.error() == ConversionCode::POSITIVE_OVERFLOW ? sgn.overflow()
-                                                         : tmp.error());
+        tmp.error() == ConversionCode::POSITIVE_OVERFLOW
+            ? sgn.overflow()
+            : tmp.error());
   }
 
   auto res = sgn.finalize(tmp.value());
@@ -759,7 +692,6 @@ template Expected<__int128, ConversionCode> str_to_integral<__int128>(
 template Expected<unsigned __int128, ConversionCode>
 str_to_integral<unsigned __int128>(StringPiece* src) noexcept;
 #endif
-
 } // namespace detail
 
 ConversionError makeConversionError(ConversionCode code, StringPiece input) {
@@ -767,8 +699,9 @@ ConversionError makeConversionError(ConversionCode code, StringPiece input) {
   static_assert(
       std::is_unsigned<std::underlying_type<ConversionCode>::type>::value,
       "ConversionCode should be unsigned");
-  assert((std::size_t)code < kErrorStrings.size());
-  const ErrorString& err = kErrorStrings[(std::size_t)code];
+  auto index = static_cast<std::size_t>(code);
+  FOLLY_SAFE_CHECK(index < kErrorStrings.size(), "code=", uint64_t(index));
+  const ErrorString& err = kErrorStrings[index];
   if (code == ConversionCode::EMPTY_INPUT_STRING && input.empty()) {
     return {err.string, code};
   }

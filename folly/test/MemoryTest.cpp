@@ -37,6 +37,30 @@ static constexpr std::size_t kTooBig = folly::constexpr_max(
     std::size_t{std::numeric_limits<uint32_t>::max()},
     std::size_t{1} << (8 * sizeof(std::size_t) - 14));
 
+struct MemoryTest : testing::Test {};
+
+TEST_F(MemoryTest, to_address_pointer) {
+  int a;
+  EXPECT_EQ(&a, folly::access::to_address(&a));
+}
+
+TEST_F(MemoryTest, to_address_std_unique_ptr) {
+  auto b = std::make_unique<int>();
+  EXPECT_EQ(b.get(), folly::access::to_address(b));
+}
+
+TEST_F(MemoryTest, to_address_custom_ptr) {
+  struct custom_ptr {
+    // not a template
+    // no element_type
+    int* ptr;
+    int* operator->() const noexcept { return ptr; }
+  };
+  int a;
+  custom_ptr p{&a};
+  EXPECT_EQ(&a, folly::access::to_address(p));
+}
+
 TEST(operatorNewDelete, zero) {
   auto p = ::operator new(0);
   EXPECT_TRUE(p != nullptr);
@@ -72,6 +96,14 @@ TEST(toSharedPtrAliasing, example) {
   auto sp = folly::copy_to_shared_ptr(std::tuple{3, 4});
   auto a = folly::to_shared_ptr_aliasing(sp, &std::get<1>(*sp));
   EXPECT_EQ(4, *a);
+}
+
+TEST(toSharedPtrNonOwning, example) {
+  int i = 3;
+  auto sp = folly::to_shared_ptr_non_owning(&i);
+  EXPECT_EQ(&i, sp.get());
+  EXPECT_EQ(3, *sp);
+  EXPECT_EQ(0, sp.use_count());
 }
 
 TEST(toWeakPtr, example) {
@@ -165,6 +197,21 @@ TEST(copyThroughUniquePtr, example) {
   p.reset();
   s = copy_through_unique_ptr(p);
   EXPECT_EQ(s, nullptr);
+}
+
+TEST(copyThroughSharedPtr, example) {
+  std::shared_ptr<int> p = std::make_shared<int>(17);
+  std::shared_ptr<int> s = copy_through_shared_ptr(p);
+  EXPECT_EQ(17, *s);
+  EXPECT_EQ(17, *p);
+  EXPECT_EQ(s.use_count(), 1);
+  EXPECT_EQ(p.use_count(), 1);
+  EXPECT_NE(s.get(), p.get());
+  p.reset();
+  s = copy_through_shared_ptr(p);
+  EXPECT_EQ(s, nullptr);
+  EXPECT_EQ(s.use_count(), 0);
+  EXPECT_EQ(p.use_count(), 0);
 }
 
 TEST(toErasedUniquePtr, example) {

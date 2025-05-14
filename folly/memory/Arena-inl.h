@@ -29,7 +29,8 @@ void* Arena<Alloc>::allocateSlow(size_t size) {
   char* start;
 
   size_t allocSize;
-  if (!checked_add(&allocSize, std::max(size, minBlockSize()), sizeof(Block))) {
+  if (!checked_add(
+          &allocSize, std::max(size, minBlockSize()), roundUp(sizeof(Block)))) {
     throw_exception<std::bad_alloc>();
   }
   if (sizeLimit_ != kNoSizeLimit &&
@@ -40,10 +41,10 @@ void* Arena<Alloc>::allocateSlow(size_t size) {
   if (size > minBlockSize()) {
     // Allocate a large block for this chunk only; don't change ptr_ and end_,
     // let them point into a normal block (or none, if they're null)
-    allocSize = sizeof(LargeBlock) + size;
+    allocSize = roundUp(sizeof(LargeBlock)) + size;
     void* mem = AllocTraits::allocate(alloc(), allocSize);
     auto blk = new (mem) LargeBlock(allocSize);
-    start = blk->start();
+    start = align(blk->start());
     largeBlocks_.push_back(*blk);
   } else {
     // Allocate a normal sized block and carve out size bytes from it
@@ -53,11 +54,11 @@ void* Arena<Alloc>::allocateSlow(size_t size) {
     allocSize = blockGoodAllocSize();
     void* mem = AllocTraits::allocate(alloc(), allocSize);
     auto blk = new (mem) Block();
-    start = blk->start();
+    start = align(blk->start());
     blocks_.push_back(*blk);
     currentBlock_ = blocks_.last();
     ptr_ = start + size;
-    end_ = start + allocSize - sizeof(Block);
+    end_ = static_cast<char*>(mem) + allocSize;
     assert(ptr_ <= end_);
   }
 

@@ -57,14 +57,14 @@ struct FunctionClassType {
 // You cannot derive from a pointer to function, so wrap it in a class
 
 template <FOLLY_DETAIL_NOEXCEPT_DECLARATION typename Return, typename... Args>
-struct FunctionClassType<Return (*)(Args...)
-                             FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
+struct FunctionClassType<Return (*)(
+    Args...) FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
   using Ptr = Return (*)(Args...) FOLLY_DETAIL_NOEXCEPT_SPECIFICATION;
   struct type {
     /* implicit */ constexpr type(Ptr function) noexcept
         : function_(function) {}
     constexpr auto operator()(Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return function_(std::forward<Args>(args)...);
     }
 
@@ -83,18 +83,18 @@ template <
     FOLLY_DETAIL_NOEXCEPT_DECLARATION typename Return,
     typename Self,
     typename... Args>
-struct FunctionClassType<Return (Self::*)(Args...)
-                             FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
+struct FunctionClassType<Return (Self::*)(
+    Args...) FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
   using Ptr = Return (Self::*)(Args...) FOLLY_DETAIL_NOEXCEPT_SPECIFICATION;
   struct type {
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(Self& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (self.*memberPointer_)(std::forward<Args>(args)...);
     }
     constexpr auto operator()(Self&& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (self.*memberPointer_)(std::forward<Args>(args)...);
     }
 
@@ -107,15 +107,15 @@ template <
     FOLLY_DETAIL_NOEXCEPT_DECLARATION typename Return,
     typename Self,
     typename... Args>
-struct FunctionClassType<Return (Self::*)(Args...)
-                             const FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
+struct FunctionClassType<Return (Self::*)(
+    Args...) const FOLLY_DETAIL_NOEXCEPT_SPECIFICATION> {
   using Ptr =
       Return (Self::*)(Args...) const FOLLY_DETAIL_NOEXCEPT_SPECIFICATION;
   struct type {
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(const Self& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (self.*memberPointer_)(std::forward<Args>(args)...);
     }
 
@@ -135,7 +135,7 @@ struct FunctionClassType<
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(Self& self, Args&&... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (self.*memberPointer_)(std::forward<Args>(args)...);
     }
 
@@ -156,7 +156,7 @@ struct FunctionClassType<
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(const Self& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (self.*memberPointer_)(std::forward<Args>(args)...);
     }
 
@@ -176,7 +176,7 @@ struct FunctionClassType<
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(Self&& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (std::move(self).*memberPointer_)(std::forward<Args>(args)...);
     }
 
@@ -197,7 +197,7 @@ struct FunctionClassType<
     /* implicit */ constexpr type(Ptr memberPointer) noexcept
         : memberPointer_(memberPointer) {}
     constexpr auto operator()(const Self&& self, Args... args) const
-        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION -> Return {
+        FOLLY_DETAIL_NOEXCEPT_SPECIFICATION->Return {
       return (std::move(self).*memberPointer_)(std::forward<Args>(args)...);
     }
 

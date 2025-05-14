@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include <folly/Portability.h>
 #include <folly/container/IntrusiveHeap.h>
 #include <folly/lang/SafeAssert.h>
 #include <folly/synchronization/DistributedMutex.h>
@@ -71,6 +72,13 @@ class HeapTimekeeper::State {
 
   State() { clearAndAdjustCapacity(queue_); }
   ~State() {
+    // On some Windows configurations, threads may be (uncleanly) terminated on
+    // process exit before singleton destructors run, so we cannot guarantee any
+    // invariants on destruction.
+    if constexpr (kIsWindows) {
+      return;
+    }
+
     // State is shared with future, but it should only be destroyed once the
     // worker thread has drained it completely.
     CHECK_EQ(queue_.size(), 0);
@@ -252,8 +260,9 @@ void HeapTimekeeper::State::worker() {
               ? std::chrono::nanoseconds{0}
               : wo.spin_max());
       if (!wakeUp->try_wait_until(nextWakeUp_)) {
-        if (mutex_.lock_combine(
-                [&] { return std::exchange(wakeUp_, nullptr) == nullptr; })) {
+        if (mutex_.lock_combine([&] {
+              return std::exchange(wakeUp_, nullptr) == nullptr;
+            })) {
           // Someone stole the reference to the semaphore, we must wait for them
           // to post it so we can destroy it.
           wakeUp->wait();

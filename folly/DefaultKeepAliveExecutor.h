@@ -47,6 +47,8 @@ class DefaultKeepAliveExecutor : public virtual Executor {
 
   folly::Executor::KeepAlive<> weakRef() { return getWeakRef(*this); }
 
+  class WeakRefExecutor : public virtual Executor {};
+
  protected:
   void joinKeepAlive() {
     DCHECK(keepAlive_);
@@ -65,11 +67,11 @@ class DefaultKeepAliveExecutor : public virtual Executor {
 
  private:
   struct ControlBlock {
-    std::atomic<ssize_t> keepAliveCount_{1};
+    std::atomic<ptrdiff_t> keepAliveCount_{1};
   };
 
   template <typename ExecutorT = Executor>
-  class WeakRef : public ExecutorT {
+  class WeakRef : public virtual ExecutorT, public virtual WeakRefExecutor {
    public:
     static folly::Executor::KeepAlive<ExecutorT> create(
         std::shared_ptr<ControlBlock> controlBlock, ExecutorT* executor) {

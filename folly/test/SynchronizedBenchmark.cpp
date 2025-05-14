@@ -21,7 +21,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <thread>
 
 #include <folly/Benchmark.h>
@@ -200,7 +199,7 @@ class BenchmarkStartBarrier {
   explicit BenchmarkStartBarrier(int threads) : threads_{threads + 1} {}
 
   void wait() {
-    auto lck = std::unique_lock<std::mutex>{mutex_};
+    auto lck = std::unique_lock{mutex_};
     ++started_;
 
     // if all the threads have started the benchmarks
@@ -491,7 +490,7 @@ BENCHMARK(SixteenThreadsSixteenMutexesPersistent, iters) {
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
 }
 
@@ -662,8 +661,8 @@ void simple(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lckOne = std::unique_lock<std::mutex>{one, std::defer_lock};
-      auto lckTwo = std::unique_lock<std::mutex>{two, std::defer_lock};
+      auto lckOne = std::unique_lock{one, std::defer_lock};
+      auto lckTwo = std::unique_lock{two, std::defer_lock};
       func(lckOne, lckTwo);
 
       spin(FLAGS_iterations);
@@ -674,7 +673,7 @@ void simple(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lck = std::unique_lock<std::mutex>{one};
+      auto lck = std::unique_lock{one};
       spin(FLAGS_iterations * FLAGS_iterations);
     }
   }};
@@ -683,7 +682,7 @@ void simple(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lck = std::unique_lock<std::mutex>{two};
+      auto lck = std::unique_lock{two};
       spin(FLAGS_iterations * FLAGS_iterations);
     }
   }};
@@ -708,9 +707,9 @@ void pathological(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lckOne = std::unique_lock<std::mutex>{one, std::defer_lock};
-      auto lckTwo = std::unique_lock<std::mutex>{two, std::defer_lock};
-      auto lckThree = std::unique_lock<std::mutex>{three, std::defer_lock};
+      auto lckOne = std::unique_lock{one, std::defer_lock};
+      auto lckTwo = std::unique_lock{two, std::defer_lock};
+      auto lckThree = std::unique_lock{three, std::defer_lock};
       func(lckOne, lckTwo, lckThree);
 
       spin(FLAGS_iterations);
@@ -721,7 +720,7 @@ void pathological(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lck = std::unique_lock<std::mutex>{one};
+      auto lck = std::unique_lock{one};
 
       spin(FLAGS_iterations * FLAGS_iterations);
     }
@@ -731,8 +730,8 @@ void pathological(std::size_t iters, LockingFunc func) {
     barrier.wait();
 
     for (auto i = std::size_t{0}; i < iters; ++i) {
-      auto lckTwo = std::unique_lock<std::mutex>{two};
-      auto lckThree = std::unique_lock<std::mutex>{three};
+      auto lckTwo = std::unique_lock{two};
+      auto lckThree = std::unique_lock{three};
 
       spin(FLAGS_iterations * FLAGS_iterations);
     }

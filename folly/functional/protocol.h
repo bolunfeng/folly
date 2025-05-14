@@ -58,7 +58,7 @@ struct match_empty_function_protocol_fn {
 
   template <typename T>
   static constexpr bool cx_matches_v =
-      require_sizeof<T>&& is_detected_v<detect_from_eq_nullptr, T>;
+      require_sizeof<T> && is_detected_v<detect_from_eq_nullptr, T>;
 
  public:
   template <typename T, std::enable_if_t<!cx_matches_v<T>, int> = 0>
@@ -108,7 +108,7 @@ template <typename S>
 struct match_safely_invocable_as_protocol_impl_ {
   using traits = function_traits<S>;
 
-  using sig_r = typename traits::result_type;
+  using sig_r = typename traits::result;
   static constexpr bool sig_nx = traits::is_nothrow;
 
   template <typename F>
@@ -143,7 +143,7 @@ struct match_safely_invocable_as_protocol_impl_ {
   template <typename F, typename FCVR = fun_cvref<F>>
   static constexpr bool is_invocable_r_v = std::is_reference<FCVR>::value
       ? is_invocable_r_<F>::value
-      : is_invocable_r_<F&>::value&& is_invocable_r_<F&&>::value;
+      : is_invocable_r_<F&>::value && is_invocable_r_<F&&>::value;
 };
 
 template <

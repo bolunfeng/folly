@@ -27,9 +27,10 @@
 
 #include <glog/logging.h>
 
-#include <folly/Portability.h>
 #include <folly/lang/Keep.h>
 #include <folly/portability/GTest.h>
+
+FOLLY_GNU_DISABLE_WARNING("-Wself-move")
 
 using std::shared_ptr;
 using std::unique_ptr;
@@ -206,9 +207,10 @@ struct ExpectingDeleter {
 };
 
 TEST(Expected, valueMove) {
-  auto ptr = Expected<std::unique_ptr<int, ExpectingDeleter>, int>(
-                 std::in_place, new int(42), ExpectingDeleter{1337})
-                 .value();
+  auto ptr =
+      Expected<std::unique_ptr<int, ExpectingDeleter>, int>(
+          std::in_place, new int(42), ExpectingDeleter{1337})
+          .value();
   *ptr = 1337;
 }
 
@@ -462,7 +464,6 @@ TEST(Expected, Conversions) {
   // Truthy tests work and are not ambiguous
   if (mbool && mshort && mstr && mint) { // only checks not-empty
     if (*mbool && *mshort && *mstr && *mint) { // only checks value
-      ;
     }
   }
 
@@ -805,8 +806,9 @@ TEST(Expected, orElse) {
 
   {
     EXPECT_THROW(
-        (Expected<std::unique_ptr<int>, E>{unexpected, E::E1}.orElse(
-            [](E) { throw std::runtime_error(""); })),
+        (Expected<std::unique_ptr<int>, E>{unexpected, E::E1}.orElse([](E) {
+          throw std::runtime_error("");
+        })),
         std::runtime_error);
   }
 
@@ -958,8 +960,9 @@ TEST(Expected, TestUnique) {
     return std::make_unique<int>(1);
   };
 
-  EXPECT_EQ(
-      2, **mk().then([](auto r) { return std::make_unique<int>(*r + 1); }));
+  EXPECT_EQ(2, **mk().then([](auto r) {
+    return std::make_unique<int>(*r + 1);
+  }));
 
   // Test converting errors works
   struct Convertible {
@@ -969,19 +972,6 @@ TEST(Expected, TestUnique) {
       2, **mk().then([](auto r) -> Expected<std::unique_ptr<int>, Convertible> {
         return std::make_unique<int>(*r + 1);
       }));
-}
-
-struct ConvertibleNum {
-  /*implicit*/ operator Expected<int, E>() const { return num_; }
-  int num_;
-};
-
-TEST(Expected, TestChainedConversion) {
-  auto vs =
-      std::vector<Expected<ConvertibleNum, E>>{ConvertibleNum{.num_ = 137}};
-  for (Expected<int, E> v : vs) {
-    ASSERT_EQ(137, *v);
-  }
 }
 
 struct ConvertibleError {

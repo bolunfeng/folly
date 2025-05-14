@@ -116,6 +116,7 @@ struct BenchmarkSuspenderBase {
    * Accumulates time spent outside benchmark.
    */
   static std::chrono::high_resolution_clock::duration timeSpent;
+  static std::chrono::high_resolution_clock::duration suspenderOverhead;
 };
 
 template <typename Clock>
@@ -165,7 +166,9 @@ struct BenchmarkSuspender : BenchmarkSuspenderBase {
 
   template <class F>
   auto dismissing(F f) -> invoke_result_t<F> {
-    SCOPE_EXIT { rehire(); };
+    SCOPE_EXIT {
+      rehire();
+    };
     dismiss();
     return f();
   }
@@ -179,7 +182,7 @@ struct BenchmarkSuspender : BenchmarkSuspenderBase {
  private:
   void tally() {
     auto end = Clock::now();
-    timeSpent += end - start;
+    timeSpent += (end - start) + suspenderOverhead;
     start = end;
   }
 
@@ -197,11 +200,14 @@ class BenchmarkingStateBase {
   std::vector<BenchmarkResult> runBenchmarksWithResults() const;
 
   static folly::StringPiece getGlobalBaselineNameForTests();
+  static folly::StringPiece getGlobalSuspenderBaselineNameForTests();
 
   bool useCounters() const;
 
   void addBenchmarkImpl(
       const char* file, StringPiece name, BenchmarkFun, bool useCounter);
+
+  std::vector<std::string> getBenchmarkList();
 
  protected:
   // There is no need for this virtual but we overcome a check
@@ -384,8 +390,9 @@ void printResultComparison(
              return rv;                                                      \
            }),                                                               \
        true);                                                                \
-  static void funName([[maybe_unused]] ::folly::UserCounters& counters       \
-                          FOLLY_PP_DETAIL_APPEND_VA_ARG(paramType paramName))
+  static void funName(                                                       \
+      [[maybe_unused]] ::folly::UserCounters& counters                       \
+          FOLLY_PP_DETAIL_APPEND_VA_ARG(paramType paramName))
 
 /**
  * Introduces a benchmark function with support for returning the actual
@@ -646,6 +653,14 @@ void printResultComparison(
 #define BENCHMARK_DRAW_LINE()                                                \
   [[maybe_unused]] static bool FB_ANONYMOUS_VARIABLE(follyBenchmarkUnused) = \
       (::folly::addBenchmark(__FILE__, "-", []() -> unsigned { return 0; }), \
+       true)
+
+/**
+ * Prints arbitrary text.
+ */
+#define BENCHMARK_DRAW_TEXT(text)                                              \
+  [[maybe_unused]] static bool FB_ANONYMOUS_VARIABLE(follyBenchmarkUnused) =   \
+      (::folly::addBenchmark(__FILE__, #text, []() -> unsigned { return 0; }), \
        true)
 
 /**

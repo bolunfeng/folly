@@ -67,8 +67,9 @@ namespace folly {
  */
 template <typename MessageT>
 class NotificationQueue {
-  struct Node : public boost::intrusive::slist_base_hook<
-                    boost::intrusive::cache_last<true>> {
+  struct Node
+      : public boost::intrusive::slist_base_hook<
+            boost::intrusive::cache_last<true>> {
     template <typename MessageTT>
     Node(MessageTT&& msg, std::shared_ptr<RequestContext> ctx)
         : msg_(std::forward<MessageTT>(msg)), ctx_(std::move(ctx)) {}
@@ -272,9 +273,9 @@ class NotificationQueue {
       if (eventfd_ == -1) {
         if (errno == ENOSYS || errno == EINVAL) {
           // eventfd not availalble
-          LOG(ERROR) << "failed to create eventfd for NotificationQueue: "
-                     << errno << ", falling back to pipe mode (is your kernel "
-                     << "> 2.6.30?)";
+          LOG(ERROR)
+              << "failed to create eventfd for NotificationQueue: " << errno
+              << ", falling back to pipe mode (is your kernel " << "> 2.6.30?)";
           fdType = FdType::PIPE;
         } else {
           // some other error
@@ -288,7 +289,7 @@ class NotificationQueue {
 #endif
 
     if (fdType == FdType::PIPE) {
-      if (pipe(pipeFds_)) {
+      if (fileops::pipe(pipeFds_)) {
         folly::throwSystemError(
             "Failed to create pipe for NotificationQueue", errno);
       }
@@ -307,8 +308,8 @@ class NotificationQueue {
               errno);
         }
       } catch (...) {
-        ::close(pipeFds_[0]);
-        ::close(pipeFds_[1]);
+        fileops::close(pipeFds_[0]);
+        fileops::close(pipeFds_[1]);
         throw;
       }
     }
@@ -321,15 +322,15 @@ class NotificationQueue {
       queue_.pop_front();
     }
     if (eventfd_ >= 0) {
-      ::close(eventfd_);
+      fileops::close(eventfd_);
       eventfd_ = -1;
     }
     if (pipeFds_[0] >= 0) {
-      ::close(pipeFds_[0]);
+      fileops::close(pipeFds_[0]);
       pipeFds_[0] = -1;
     }
     if (pipeFds_[1] >= 0) {
-      ::close(pipeFds_[1]);
+      fileops::close(pipeFds_[1]);
       pipeFds_[1] = -1;
     }
   }
@@ -416,13 +417,15 @@ class NotificationQueue {
    * unmodified.
    */
   bool tryConsume(MessageT& result) {
-    SCOPE_EXIT { syncSignalAndQueue(); };
+    SCOPE_EXIT {
+      syncSignalAndQueue();
+    };
 
     checkPid();
     std::unique_ptr<Node> data;
 
     {
-      std::unique_lock<SpinLock> g(spinlock_);
+      std::unique_lock g(spinlock_);
 
       if (FOLLY_UNLIKELY(queue_.empty())) {
         return false;
@@ -439,7 +442,7 @@ class NotificationQueue {
   }
 
   size_t size() const {
-    std::unique_lock<SpinLock> g(spinlock_);
+    std::unique_lock g(spinlock_);
     return queue_.size();
   }
 
@@ -501,11 +504,11 @@ class NotificationQueue {
         // eventfd(2) dictates that we must write a 64-bit integer
         uint64_t signal = 1;
         bytes_expected = sizeof(signal);
-        bytes_written = ::write(eventfd_, &signal, bytes_expected);
+        bytes_written = fileops::write(eventfd_, &signal, bytes_expected);
       } else {
         uint8_t signal = 1;
         bytes_expected = sizeof(signal);
-        bytes_written = ::write(pipeFds_[1], &signal, bytes_expected);
+        bytes_written = fileops::write(pipeFds_[1], &signal, bytes_expected);
       }
     } while (bytes_written == -1 && errno == EINTR);
 
@@ -530,8 +533,8 @@ class NotificationQueue {
       // still drain.
       uint8_t message[32];
       ssize_t result;
-      while ((result = readNoInt(pipeFds_[0], &message, sizeof(message))) !=
-             -1) {
+      while (
+          (result = readNoInt(pipeFds_[0], &message, sizeof(message))) != -1) {
         bytes_read += result;
       }
       CHECK(result == -1 && errno == EAGAIN);
@@ -547,12 +550,12 @@ class NotificationQueue {
   }
 
   void ensureSignal() const {
-    std::unique_lock<SpinLock> g(spinlock_);
+    std::unique_lock g(spinlock_);
     ensureSignalLocked();
   }
 
   void syncSignalAndQueue() {
-    std::unique_lock<SpinLock> g(spinlock_);
+    std::unique_lock g(spinlock_);
 
     if (queue_.empty()) {
       drainSignalsLocked();
@@ -568,7 +571,7 @@ class NotificationQueue {
     {
       auto data = std::make_unique<Node>(
           std::forward<MessageTT>(message), RequestContext::saveContext());
-      std::unique_lock<SpinLock> g(spinlock_);
+      std::unique_lock g(spinlock_);
       if (checkDraining(throws) || !checkQueueSize(maxSize, throws)) {
         return false;
       }
@@ -598,7 +601,7 @@ class NotificationQueue {
         q.push_back(*data.release());
         ++first;
       }
-      std::unique_lock<SpinLock> g(spinlock_);
+      std::unique_lock g(spinlock_);
       checkDraining();
       queue_.splice(queue_.end(), q);
       if (numActiveConsumers_ < numConsumers_) {
@@ -666,7 +669,9 @@ void NotificationQueue<MessageT>::Consumer::consumeMessages(
       queue_->syncSignalAndQueue();
     }
   };
-  SCOPE_EXIT { setActive(false, /* shouldLock = */ true); };
+  SCOPE_EXIT {
+    setActive(false, /* shouldLock = */ true);
+  };
   SCOPE_EXIT {
     if (numConsumed != nullptr) {
       *numConsumed = numProcessed;
@@ -780,7 +785,7 @@ void NotificationQueue<MessageT>::Consumer::init(
   queue_ = queue;
 
   {
-    std::unique_lock<SpinLock> g(queue_->spinlock_);
+    std::unique_lock g(queue_->spinlock_);
     queue_->numConsumers_++;
   }
   queue_->ensureSignal();
@@ -800,7 +805,7 @@ void NotificationQueue<MessageT>::Consumer::stopConsuming() {
   }
 
   {
-    std::unique_lock<SpinLock> g(queue_->spinlock_);
+    std::unique_lock g(queue_->spinlock_);
     queue_->numConsumers_--;
     setActive(false);
   }
@@ -816,7 +821,7 @@ bool NotificationQueue<MessageT>::Consumer::consumeUntilDrained(
     size_t* numConsumed) noexcept {
   DestructorGuard dg(this);
   {
-    std::unique_lock<SpinLock> g(queue_->spinlock_);
+    std::unique_lock g(queue_->spinlock_);
     if (queue_->draining_) {
       return false;
     }
@@ -824,7 +829,7 @@ bool NotificationQueue<MessageT>::Consumer::consumeUntilDrained(
   }
   consumeMessages(true, numConsumed);
   {
-    std::unique_lock<SpinLock> g(queue_->spinlock_);
+    std::unique_lock g(queue_->spinlock_);
     queue_->draining_ = false;
   }
   return true;
@@ -833,13 +838,15 @@ bool NotificationQueue<MessageT>::Consumer::consumeUntilDrained(
 template <typename MessageT>
 template <typename F>
 void NotificationQueue<MessageT>::SimpleConsumer::consume(F&& foreach) {
-  SCOPE_EXIT { queue_.syncSignalAndQueue(); };
+  SCOPE_EXIT {
+    queue_.syncSignalAndQueue();
+  };
 
   queue_.checkPid();
 
   std::unique_ptr<Node> data;
   {
-    std::unique_lock<SpinLock> g(queue_.spinlock_);
+    std::unique_lock g(queue_.spinlock_);
 
     if (FOLLY_UNLIKELY(queue_.queue_.empty())) {
       return;

@@ -73,6 +73,11 @@
 #endif
 
 namespace folly {
+
+namespace detail {
+extern bool const xlog_support_buck2;
+}
+
 constexpr auto kLoggingMinLevel = LogLevel::FOLLY_XLOG_MIN_LEVEL;
 static_assert(
     !isLogLevelFatal(kLoggingMinLevel),
@@ -200,6 +205,25 @@ static_assert(
 #define XLOGF_EVERY_MS(level, ms, fmt, ...) \
   XLOGF_EVERY_MS_IF(level, true, ms, fmt, ##__VA_ARGS__)
 
+/**
+ * Similar to XLOGF(...) except log a message if the specified condition
+ * predicate evaluates to true or every @param ms milliseconds
+ *
+ * Note that this is threadsafe.
+ */
+#define XLOGF_EVERY_MS_OR(level, cond, ms, fmt, ...)                         \
+  XLOGF_IF(                                                                  \
+      level,                                                                 \
+      (cond) ||                                                              \
+          [__folly_detail_xlog_ms = ms] {                                    \
+            static ::folly::logging::IntervalRateLimiter                     \
+                folly_detail_xlog_limiter(                                   \
+                    1, ::std::chrono::milliseconds(__folly_detail_xlog_ms)); \
+            return folly_detail_xlog_limiter.check();                        \
+          }(),                                                               \
+      fmt,                                                                   \
+      ##__VA_ARGS__)
+
 namespace folly {
 namespace detail {
 
@@ -218,8 +242,8 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
  * Similar to XLOG(...) except only log a message every @param n
  * invocations, approximately.
  *
- * The internal counter is process-global and threadsafe but, to
- * to avoid the performance degradation of atomic-rmw operations,
+ * The internal counter is process-global and threadsafe, but to
+ * avoid the performance degradation of atomic-rmw operations,
  * increments are non-atomic. Some increments may be missed under
  * contention, leading to possible over-logging or under-logging
  * effects.
@@ -237,11 +261,7 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
  * Similar to XLOGF(...) except only log a message every @param n
  * invocations, approximately.
  *
- * The internal counter is process-global and threadsafe but, to
- * to avoid the performance degradation of atomic-rmw operations,
- * increments are non-atomic. Some increments may be missed under
- * contention, leading to possible over-logging or under-logging
- * effects.
+ * See concurrency discussion for XLOG_EVERY_N which applies here as well.
  */
 #define XLOGF_EVERY_N(level, n, fmt, ...)                                 \
   XLOGF_IF(                                                               \
@@ -258,11 +278,7 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
  * invocations, approximately, and if the specified condition predicate
  * evaluates to true.
  *
- * The internal counter is process-global and threadsafe but, to
- * to avoid the performance degradation of atomic-rmw operations,
- * increments are non-atomic. Some increments may be missed under
- * contention, leading to possible over-logging or under-logging
- * effects.
+ * See concurrency discussion for XLOG_EVERY_N which applies here as well.
  */
 #define XLOG_EVERY_N_IF(level, cond, n, ...)                                  \
   XLOG_IF(                                                                    \
@@ -278,11 +294,7 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
  * Similar to XLOG(...) except it logs a message if the condition predicate
  * evalutes to true or approximately every @param n invocations
  *
- * The internal counter is process-global and threadsafe but, to
- * to avoid the performance degradation of atomic-rmw operations,
- * increments are non-atomic. Some increments may be missed under
- * contention, leading to possible over-logging or under-logging
- * effects.
+ * See concurrency discussion for XLOG_EVERY_N which applies here as well.
  */
 #define XLOG_EVERY_N_OR(level, cond, n, ...)                                  \
   XLOG_IF(                                                                    \
@@ -299,16 +311,29 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogEveryNImpl(size_t n) {
  * invocations, approximately, and if the specified condition predicate
  * evaluates to true.
  *
- * The internal counter is process-global and threadsafe but, to
- * to avoid the performance degradation of atomic-rmw operations,
- * increments are non-atomic. Some increments may be missed under
- * contention, leading to possible over-logging or under-logging
- * effects.
+ * See concurrency discussion for XLOG_EVERY_N which applies here as well.
  */
 #define XLOGF_EVERY_N_IF(level, cond, n, fmt, ...)                            \
   XLOGF_IF(                                                                   \
       level,                                                                  \
       (cond) &&                                                               \
+          [&] {                                                               \
+            struct folly_detail_xlog_tag {};                                  \
+            return ::folly::detail::xlogEveryNImpl<folly_detail_xlog_tag>(n); \
+          }(),                                                                \
+      fmt,                                                                    \
+      ##__VA_ARGS__)
+
+/**
+ * Similar to XLOGF(...) except it logs a message if the condition predicate
+ * evalutes to true or approximately every @param n invocations
+ *
+ * See concurrency discussion for XLOG_EVERY_N which applies here as well.
+ */
+#define XLOGF_EVERY_N_OR(level, cond, n, fmt, ...)                            \
+  XLOGF_IF(                                                                   \
+      level,                                                                  \
+      (cond) ||                                                               \
           [&] {                                                               \
             struct folly_detail_xlog_tag {};                                  \
             return ::folly::detail::xlogEveryNImpl<folly_detail_xlog_tag>(n); \
@@ -647,7 +672,9 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogFirstNExactImpl(std::size_t n) {
   FOLLY_CONSTEVAL inline StringPiece getXlogCategoryName(StringPiece, int) { \
     return category;                                                         \
   }                                                                          \
-  FOLLY_CONSTEVAL inline bool isXlogCategoryOverridden(int) { return true; } \
+  FOLLY_CONSTEVAL inline bool isXlogCategoryOverridden(int) {                \
+    return true;                                                             \
+  }                                                                          \
   }                                                                          \
   }                                                                          \
   }                                                                          \
@@ -691,13 +718,14 @@ std::unique_ptr<std::string> XCheckOpImpl(
 } // namespace detail
 } // namespace folly
 
-#define XCHECK_OP(op, arg1, arg2, ...)                                        \
-  while (auto _folly_logging_check_result = ::folly::detail::XCheckOpImpl(    \
-             #arg1 " " #op " " #arg2,                                         \
-             (arg1),                                                          \
-             (arg2),                                                          \
-             [](const auto& _folly_check_arg1, const auto& _folly_check_arg2) \
-                 -> bool { return _folly_check_arg1 op _folly_check_arg2; })) \
+#define XCHECK_OP(op, arg1, arg2, ...)                                     \
+  while (                                                                  \
+      auto _folly_logging_check_result = ::folly::detail::XCheckOpImpl(    \
+          #arg1 " " #op " " #arg2,                                         \
+          (arg1),                                                          \
+          (arg2),                                                          \
+          [](const auto& _folly_check_arg1, const auto& _folly_check_arg2) \
+              -> bool { return _folly_check_arg1 op _folly_check_arg2; })) \
   XLOG(FATAL, *_folly_logging_check_result, ##__VA_ARGS__)
 
 /**

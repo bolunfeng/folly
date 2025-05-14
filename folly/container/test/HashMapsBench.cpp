@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <random>
 #include <string>
 #include <unordered_map>
 
@@ -25,6 +26,7 @@
 #include <folly/Conv.h>
 #include <folly/Format.h>
 #include <folly/Function.h>
+#include <folly/Random.h>
 #include <folly/hash/Hash.h>
 #include <folly/init/Init.h>
 #include <folly/portability/GFlags.h>
@@ -70,6 +72,7 @@ struct hash<NonSSOString> {
   size_t operator()(const NonSSOString& s) const { return hash<string>()(s); }
 };
 
+#ifdef __GLIBCXX__
 template <>
 struct __is_fast_hash<hash<NonSSOString>> : public std::false_type {};
 
@@ -78,6 +81,7 @@ static_assert(
         __cache_default<NonSSOString, hash<NonSSOString>>::value,
     "To draw a fair comparison, the policy of whether to cache hash codes "
     "for NonSSOString keys should be the same as for std::string keys.");
+#endif
 } // namespace std
 
 namespace folly {
@@ -142,6 +146,10 @@ void benchmarkFilledMap(int runs, int size, const Test& test, int div = 1) {
   });
 }
 
+static auto getRNG() {
+  return folly::Random::create();
+}
+
 template <template <class, class> class Map, class K, class V, class Test>
 void benchmarkManyFilledMapsByKey(
     int runs, int size, const Test& test, int div = 1) {
@@ -156,7 +164,7 @@ void benchmarkManyFilledMapsByKey(
   for (int i = 0; i * div < size; ++i) {
     maps[i % 64].insert(std::pair<K, V>(toInsert[i], value<V>(i * 3)));
   }
-  std::random_shuffle(toInsert.begin(), toInsert.end());
+  std::shuffle(toInsert.begin(), toInsert.end(), getRNG());
   folly::makeUnpredictable(maps);
   folly::makeUnpredictable(toInsert);
   braces.dismissing([&] {
@@ -182,7 +190,7 @@ void benchmarkFilledMapByKey(
   for (int i = 0; i * div < size; ++i) {
     map.insert(std::pair<K, V>(toInsert[i], value<V>(i * 3)));
   }
-  std::random_shuffle(toInsert.begin(), toInsert.end());
+  std::shuffle(toInsert.begin(), toInsert.end(), getRNG());
   folly::makeUnpredictable(map);
   folly::makeUnpredictable(toInsert);
   braces.dismissing([&] {
@@ -235,8 +243,9 @@ void benchmarkInsertGrow(int runs, int size) {
 
 template <template <class, class> class Map, class K, class V>
 void benchmarkInsertSqBr(int runs, int size) {
-  benchmarkFromEmptyArgs<Map, K, V>(
-      runs, size, [](Map<K, V>& m, int i) { m[key<K>(i)] = value<V>(i); });
+  benchmarkFromEmptyArgs<Map, K, V>(runs, size, [](Map<K, V>& m, int i) {
+    m[key<K>(i)] = value<V>(i);
+  });
 }
 
 template <template <class, class> class Map, class K, class V>
@@ -309,8 +318,7 @@ void benchmarkDtor(int runs, int size) {
 template <template <class, class> class Map, class K, class V>
 void benchmarkClear(int runs, int size) {
   for (int i = 0; i < runs; ++i) {
-    benchmarkFilledMap<Map, K, V>(
-        1, size, [&](Map<K, V>& m) { m.clear(); }, 1);
+    benchmarkFilledMap<Map, K, V>(1, size, [&](Map<K, V>& m) { m.clear(); }, 1);
   }
 }
 
@@ -318,8 +326,7 @@ template <template <class, class> class Map, class K, class V>
 void benchmarkCopyCtor(int runs, int size) {
   Map<K, V> n;
   for (int i = 0; i < runs; ++i) {
-    benchmarkFilledMap<Map, K, V>(
-        1, size, [&](Map<K, V>& m) { n = m; }, 1);
+    benchmarkFilledMap<Map, K, V>(1, size, [&](Map<K, V>& m) { n = m; }, 1);
     folly::doNotOptimizeAway(n);
   }
 }
@@ -446,12 +453,12 @@ void runAllHashMapTests() {
 
 int main(int argc, char** argv) {
   folly::Init init(&argc, &argv);
-  gflags::SetCommandLineOptionWithMode(
-      "bm_max_iters", "100000", gflags::SET_FLAG_IF_DEFAULT);
-  gflags::SetCommandLineOptionWithMode(
-      "bm_min_iters", "10000", gflags::SET_FLAG_IF_DEFAULT);
-  gflags::SetCommandLineOptionWithMode(
-      "bm_max_secs", "1", gflags::SET_FLAG_IF_DEFAULT);
+  folly::gflags::SetCommandLineOptionWithMode(
+      "bm_max_iters", "100000", folly::gflags::SET_FLAG_IF_DEFAULT);
+  folly::gflags::SetCommandLineOptionWithMode(
+      "bm_min_iters", "10000", folly::gflags::SET_FLAG_IF_DEFAULT);
+  folly::gflags::SetCommandLineOptionWithMode(
+      "bm_max_secs", "1", folly::gflags::SET_FLAG_IF_DEFAULT);
   LOG(INFO) << "Preparing benchmark...";
   runAllHashMapTests();
   LOG(INFO) << "Running benchmark, which could take tens of minutes...";

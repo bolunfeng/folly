@@ -65,7 +65,7 @@ folly::SocketFds::ToSend makeFdsToSend(size_t n) {
     std::array<int, 2> rawSendFds;
     // Don't set FD_CLOEXEC here so it is extra-clear that the socket did it
     // (even though FD_CLOEXEC on this FD isn't coupled with its copy).
-    PCHECK(0 == ::pipe(rawSendFds.data()));
+    PCHECK(0 == fileops::pipe(rawSendFds.data()));
 
     for (int fd : rawSendFds) {
       auto f = std::make_shared<folly::File>(fd, /*ownsFd*/ true);
@@ -265,7 +265,9 @@ TEST_P(AsyncFdSocketSequenceRoundtripTest, WithDataSize) {
   // "ReadVec" path.
   test::ReadvCallback rcb(128, 3);
   // Avoid `readEOF` use-after-stack-scope in `~AsyncSocket`.
-  SCOPE_EXIT { recvSock_->setReadCB(nullptr); };
+  SCOPE_EXIT {
+    recvSock_->setReadCB(nullptr);
+  };
   recvSock_->setReadCB(&rcb);
 
   std::queue<

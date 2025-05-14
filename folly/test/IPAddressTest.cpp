@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include <folly/IPAddress.h>
-
+#include <ifaddrs.h>
 #include <sys/types.h>
+#include <folly/IPAddress.h>
 
 #include <string>
 
@@ -48,7 +48,7 @@ struct AddressData {
       : address(address_), bytes(), version(version_) {}
   explicit AddressData(const std::string& address_)
       : address(address_), bytes(), version(0) {}
-  AddressData() : address(""), bytes(), version(0) {}
+  AddressData() : bytes(), version(0) {}
 
   static in_addr parseAddress4(const std::string& src) {
     in_addr addr;
@@ -204,21 +204,32 @@ TEST(IPAddress, CodeExample) {
 }
 
 TEST(IPAddress, Scope) {
-  // Test that link-local scope is saved
-  auto str = "fe80::62eb:69ff:fe9b:ba60%eth0";
-  IPAddressV6 a2(str);
-  EXPECT_EQ(str, a2.str());
+  ::ifaddrs* interfaces;
+  ASSERT_NE(getifaddrs(&interfaces), -1) << "Failed to call getifaddrs()";
+  auto interfacesGuard = folly::makeGuard([&] { freeifaddrs(interfaces); });
 
-  sockaddr_in6 sock = a2.toSockAddr();
-  EXPECT_NE(0, sock.sin6_scope_id);
+  for (::ifaddrs* interface = interfaces; interface != nullptr;
+       interface = interface->ifa_next) {
+    if (interface->ifa_addr == nullptr) {
+      continue;
+    }
 
-  IPAddress a1(str);
-  EXPECT_EQ(str, a1.str());
+    // Test that link-local scope is saved
+    auto str = fmt::format("fe80::62eb:69ff:fe9b:ba60%{}", interface->ifa_name);
+    IPAddressV6 a2(str);
+    EXPECT_EQ(str, a2.str());
 
-  a2.setScopeId(0);
-  EXPECT_NE(a1, a2);
+    sockaddr_in6 sock = a2.toSockAddr();
+    EXPECT_NE(0, sock.sin6_scope_id);
 
-  EXPECT_TRUE(a2 < a1);
+    IPAddress a1(str);
+    EXPECT_EQ(str, a1.str());
+
+    a2.setScopeId(0);
+    EXPECT_NE(a1, a2);
+
+    EXPECT_TRUE(a2 < a1);
+  }
 }
 
 TEST(IPAddress, ScopeNumeric) {
@@ -1469,8 +1480,8 @@ static vector<AddressFlags> flagProvider = {
     AddressFlags("0:0:0::0", 6, IS_NONROUTABLE | IS_ZERO),
 
     // link-local v6
-    AddressFlags("fe80::0205:73ff:fef9:46fc", 6, IS_LINK_LOCAL),
-    AddressFlags("fe80::0012:34ff:fe56:7890", 6, IS_LINK_LOCAL),
+    AddressFlags("fe80::0205:73ff:fef9:46fc", 6, IS_LINK_LOCAL | IS_PRIVATE),
+    AddressFlags("fe80::0012:34ff:fe56:7890", 6, IS_LINK_LOCAL | IS_PRIVATE),
 
     // multicast v4
     AddressFlags("224.0.0.1", 4, IS_MULTICAST | IS_NONROUTABLE),

@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-#include <folly/executors/GlobalExecutor.h>
-
 #include <memory>
 #include <thread>
+#include <folly/executors/GlobalExecutor.h>
 
 #include <folly/Function.h>
 #include <folly/SharedMutex.h>
@@ -41,17 +40,6 @@ FOLLY_GFLAGS_DEFINE_uint32(
     0,
     "Number of threads global CPUThreadPoolExecutor will create");
 
-FOLLY_GFLAGS_DEFINE_bool(
-    folly_global_cpu_executor_use_throttled_lifo_sem,
-    true,
-    "Use ThrottledLifoSem in global CPUThreadPoolExecutor");
-
-FOLLY_GFLAGS_DEFINE_uint32(
-    folly_global_cpu_executor_wake_up_interval_us,
-    0,
-    "If --folly_global_cpu_executor_use_throttled_lifo_sem is true, use this "
-    "wake-up interval (in microseconds) in ThrottledLifoSem");
-
 namespace {
 
 using ImmutableGlobalCPUExecutor = CPUThreadPoolExecutor;
@@ -68,47 +56,42 @@ Singleton<std::shared_ptr<DefaultCPUExecutor>> gDefaultGlobalCPUExecutor([] {
   return new std::shared_ptr<DefaultCPUExecutor>(new DefaultCPUExecutor{});
 });
 
-Singleton<std::shared_ptr<Executor>, GlobalTag> gImmutableGlobalCPUExecutor([] {
-  size_t nthreads = FLAGS_folly_global_cpu_executor_threads;
-  nthreads = nthreads ? nthreads : folly::hardware_concurrency();
-  return new std::shared_ptr<Executor>(new ImmutableGlobalCPUExecutor(
-      nthreads,
-      FLAGS_folly_global_cpu_executor_use_throttled_lifo_sem
-          ? CPUThreadPoolExecutor::makeThrottledLifoSemQueue(
-                std::chrono::microseconds{
-                    FLAGS_folly_global_cpu_executor_wake_up_interval_us})
-          : CPUThreadPoolExecutor::makeDefaultQueue(),
-      std::make_shared<NamedThreadFactory>("GlobalCPUThreadPool")));
-});
+Singleton<std::shared_ptr<ImmutableGlobalCPUExecutor>, GlobalTag>
+    gImmutableGlobalCPUExecutor([] {
+      size_t nthreads = FLAGS_folly_global_cpu_executor_threads;
+      nthreads = nthreads ? nthreads : folly::hardware_concurrency();
+      return new std::shared_ptr<ImmutableGlobalCPUExecutor>(
+          new ImmutableGlobalCPUExecutor(
+              nthreads,
+              std::make_shared<NamedThreadFactory>("GlobalCPUThreadPool")));
+    });
 
-Singleton<std::shared_ptr<IOExecutor>, GlobalTag> gImmutableGlobalIOExecutor(
-    [] {
+Singleton<std::shared_ptr<IOThreadPoolExecutor>, GlobalTag>
+    gImmutableGlobalIOExecutor([] {
       size_t nthreads = FLAGS_folly_global_io_executor_threads;
       nthreads = nthreads ? nthreads : folly::hardware_concurrency();
-      return new std::shared_ptr<IOExecutor>(new IOThreadPoolExecutor(
+      return new std::shared_ptr<IOThreadPoolExecutor>(new IOThreadPoolExecutor(
           nthreads,
           std::make_shared<NamedThreadFactory>("GlobalIOThreadPool")));
     });
 
 template <class ExecutorBase>
-std::shared_ptr<std::shared_ptr<ExecutorBase>> getImmutablePtrPtr();
+std::shared_ptr<ExecutorBase> getImmutable();
 
-template <class ExecutorBase>
-std::shared_ptr<ExecutorBase> getImmutable() {
-  if (auto executorPtrPtr = getImmutablePtrPtr<ExecutorBase>()) {
+template <>
+std::shared_ptr<Executor> getImmutable() {
+  if (auto executorPtrPtr = gImmutableGlobalCPUExecutor.try_get()) {
     return *executorPtrPtr;
   }
   return nullptr;
 }
 
 template <>
-std::shared_ptr<std::shared_ptr<Executor>> getImmutablePtrPtr() {
-  return gImmutableGlobalCPUExecutor.try_get();
-}
-
-template <>
-std::shared_ptr<std::shared_ptr<IOExecutor>> getImmutablePtrPtr() {
-  return gImmutableGlobalIOExecutor.try_get();
+std::shared_ptr<IOExecutor> getImmutable() {
+  if (auto executorPtrPtr = gImmutableGlobalIOExecutor.try_get()) {
+    return *executorPtrPtr;
+  }
+  return nullptr;
 }
 
 template <class ExecutorBase>
@@ -174,7 +157,7 @@ std::shared_ptr<Executor> tryGetImmutableCPUPtr() {
 } // namespace detail
 
 Executor::KeepAlive<> getGlobalCPUExecutor() {
-  auto executorPtrPtr = getImmutablePtrPtr<Executor>();
+  auto executorPtrPtr = gImmutableGlobalCPUExecutor.try_get();
   if (!executorPtrPtr) {
     throw std::runtime_error("Requested global CPU executor during shutdown.");
   }
@@ -182,12 +165,21 @@ Executor::KeepAlive<> getGlobalCPUExecutor() {
   return folly::getKeepAliveToken(executorPtrPtr->get());
 }
 
-GlobalCPUExecutorCounters getGlobalCPUExecutorCounters() {
-  auto executorPtrPtr = getImmutablePtrPtr<Executor>();
+Executor::KeepAlive<> getGlobalCPUExecutorWeakRef() {
+  auto executorPtrPtr = gImmutableGlobalCPUExecutor.try_get();
   if (!executorPtrPtr) {
     throw std::runtime_error("Requested global CPU executor during shutdown.");
   }
-  auto& executor = dynamic_cast<ImmutableGlobalCPUExecutor&>(**executorPtrPtr);
+  async_tracing::logGetImmutableCPUExecutor(executorPtrPtr->get());
+  return folly::getWeakRef(**executorPtrPtr);
+}
+
+GlobalCPUExecutorCounters getGlobalCPUExecutorCounters() {
+  auto executorPtrPtr = gImmutableGlobalCPUExecutor.try_get();
+  if (!executorPtrPtr) {
+    throw std::runtime_error("Requested global CPU executor during shutdown.");
+  }
+  auto& executor = **executorPtrPtr;
   GlobalCPUExecutorCounters counters;
   counters.numThreads = executor.numThreads();
   counters.numActiveThreads = executor.numActiveThreads();
@@ -196,7 +188,7 @@ GlobalCPUExecutorCounters getGlobalCPUExecutorCounters() {
 }
 
 Executor::KeepAlive<IOExecutor> getGlobalIOExecutor() {
-  auto executorPtrPtr = getImmutablePtrPtr<IOExecutor>();
+  auto executorPtrPtr = gImmutableGlobalIOExecutor.try_get();
   if (!executorPtrPtr) {
     throw std::runtime_error("Requested global IO executor during shutdown.");
   }

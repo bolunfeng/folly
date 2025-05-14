@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -51,6 +52,10 @@ class ManualTimekeeper : public folly::Timekeeper {
   /// fulfilled
   std::size_t numScheduled() const;
 
+  /// Advance the timekeeper's clock at least enough to release the next pending
+  /// event.
+  void advanceToNext();
+
  private:
   class TimeoutHandler {
    public:
@@ -67,12 +72,14 @@ class ManualTimekeeper : public folly::Timekeeper {
 
     bool canSet();
   };
-
-  std::chrono::steady_clock::time_point now_;
-  folly::Synchronized<std::multimap<
+  using TimeoutSchedule = std::multimap<
       std::chrono::steady_clock::time_point,
-      std::shared_ptr<TimeoutHandler>>>
-      schedule_;
+      std::shared_ptr<TimeoutHandler>>;
+
+  void fulfillReady(TimeoutSchedule& schedule);
+
+  std::atomic<std::chrono::steady_clock::time_point> now_;
+  folly::Synchronized<TimeoutSchedule> schedule_;
 };
 
 } // namespace folly

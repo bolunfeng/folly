@@ -30,7 +30,6 @@
 
 #include <folly/SocketAddress.h>
 #include <folly/String.h>
-#include <folly/experimental/TestUtil.h>
 #include <folly/io/Cursor.h>
 #include <folly/io/async/AsyncPipe.h>
 #include <folly/io/async/AsyncSSLSocket.h>
@@ -51,6 +50,7 @@
 #include <folly/portability/GTest.h>
 #include <folly/portability/OpenSSL.h>
 #include <folly/portability/Unistd.h>
+#include <folly/testing/TestUtil.h>
 
 #ifdef __linux__
 #include <dlfcn.h>
@@ -1249,7 +1249,9 @@ TEST(AsyncSSLSocketTest, SSLParseClientHelloOnePacket) {
   cursor.write<uint32_t>(0);
 
   SSL* ssl = ctx->createSSL();
-  SCOPE_EXIT { SSL_free(ssl); };
+  SCOPE_EXIT {
+    SSL_free(ssl);
+  };
   AsyncSSLSocket::UniquePtr sock(
       new AsyncSSLSocket(ctx, &eventBase, fds[0], true));
   sock->enableClientHelloParsing();
@@ -1289,7 +1291,9 @@ TEST(AsyncSSLSocketTest, SSLParseClientHelloTwoPackets) {
   cursor.write<uint32_t>(0);
 
   SSL* ssl = ctx->createSSL();
-  SCOPE_EXIT { SSL_free(ssl); };
+  SCOPE_EXIT {
+    SSL_free(ssl);
+  };
   AsyncSSLSocket::UniquePtr sock(
       new AsyncSSLSocket(ctx, &eventBase, fds[0], true));
   sock->enableClientHelloParsing();
@@ -1347,7 +1351,9 @@ TEST(AsyncSSLSocketTest, SSLParseClientHelloMultiplePackets) {
   cursor.write<uint32_t>(0);
 
   SSL* ssl = ctx->createSSL();
-  SCOPE_EXIT { SSL_free(ssl); };
+  SCOPE_EXIT {
+    SSL_free(ssl);
+  };
   AsyncSSLSocket::UniquePtr sock(
       new AsyncSSLSocket(ctx, &eventBase, fds[0], true));
   sock->enableClientHelloParsing();
@@ -1981,7 +1987,7 @@ TEST(AsyncSSLSocketTest, NoClientCertHandshakeError) {
 }
 
 static void makeNonBlockingPipe(int pipefds[2]) {
-  if (pipe(pipefds) != 0) {
+  if (fileops::pipe(pipefds) != 0) {
     throw std::runtime_error("Cannot create pipe");
   }
   if (::fcntl(pipefds[0], F_SETFL, O_NONBLOCK) != 0) {
@@ -2037,20 +2043,21 @@ static int customRsaPrivEnc(
     LOG(INFO) << "Got a socket passed in, closing it...";
     socket->closeNow();
   }
-  asyncJobEvb->runInEventBaseThread([retptr = retptr,
-                                     flen = flen,
-                                     from = from,
-                                     to = to,
-                                     padding = padding,
-                                     actualRSA = actualRSA,
-                                     writer = std::move(asyncPipeWriter)]() {
-    LOG(INFO) << "Running job";
-    *retptr = RSA_meth_get_priv_enc(RSA_PKCS1_OpenSSL())(
-        flen, from, to, actualRSA, padding);
-    LOG(INFO) << "Finished job, writing to pipe";
-    uint8_t byte = *retptr > 0 ? 1 : 0;
-    writer->write(nullptr, &byte, 1);
-  });
+  asyncJobEvb->runInEventBaseThread(
+      [retptr = retptr,
+       flen = flen,
+       from = from,
+       to = to,
+       padding = padding,
+       actualRSA = actualRSA,
+       writer = std::move(asyncPipeWriter)]() {
+        LOG(INFO) << "Running job";
+        *retptr = RSA_meth_get_priv_enc(RSA_PKCS1_OpenSSL())(
+            flen, from, to, actualRSA, padding);
+        LOG(INFO) << "Finished job, writing to pipe";
+        uint8_t byte = *retptr > 0 ? 1 : 0;
+        writer->write(nullptr, &byte, 1);
+      });
 
   LOG(INFO) << "About to pause job";
 
@@ -3188,7 +3195,6 @@ TEST(AsyncSSLSocketTest, TestNullConnectCallbackError) {
   EXPECT_FALSE(server.handshakeSuccess_);
 }
 
-#if FOLLY_OPENSSL_PREREQ(1, 1, 1)
 TEST(AsyncSSLSocketTest, TestSSLSetClientOptionsP256) {
   EventBase evb;
   std::array<NetworkSocket, 2> fds;
@@ -3256,7 +3262,6 @@ TEST(AsyncSSLSocketTest, TestSSLSetClientOptionsX25519) {
   auto sharedGroupName = serverSocket->getNegotiatedGroup();
   EXPECT_THAT(sharedGroupName, testing::HasSubstr("X25519"));
 }
-#endif
 
 /**
  * Test overriding the flags passed to "sendmsg()" system call,

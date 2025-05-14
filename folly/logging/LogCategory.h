@@ -198,9 +198,10 @@ class LogCategory {
    * This is used when the LogHandler configuration is changed requiring one or
    * more LogHandler objects to be replaced with new ones.
    */
-  void updateHandlers(const std::unordered_map<
-                      std::shared_ptr<LogHandler>,
-                      std::shared_ptr<LogHandler>>& handlerMap);
+  void updateHandlers(
+      const std::unordered_map<
+          std::shared_ptr<LogHandler>,
+          std::shared_ptr<LogHandler>>& handlerMap);
 
   /* Internal methods for use by other parts of the logging library code */
 
@@ -212,8 +213,16 @@ class LogCategory {
    *
    * This method generally should be invoked only through the logging macros,
    * rather than calling this directly.
+   *
+   * skipAbortOnFatal parameters provides more granular control on who
+   * is responsible for aborting process when calling the method directly.
+   * If skipAbortOnFatal is true, then this LogCategory will not trigger
+   * std::abort() if the LogMessage is fatal and the process should abort.
+   * This is necessary for the LoggerDB to handle fatal messages specially and
+   * only suitable for direct calls.
    */
-  void admitMessage(const LogMessage& message) const;
+  void admitMessage(
+      const LogMessage& message, bool skipAbortOnFatal = false) const;
 
   /**
    * Note: setLevelLocked() may only be called while holding the

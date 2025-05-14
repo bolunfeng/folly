@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <type_traits>
 
@@ -94,8 +95,9 @@ inline constexpr T divRoundAwayBranchful(T num, T denom) {
   // result, which is the same as divFloor.  Second case of second ternary
   // operator handles positive result, which is the same as divCeil.
   // Zero case is separated for simplicity.
-  return num == 0 ? 0
-                  : (num + (num > 0 ? -1 : 1)) / denom +
+  return num == 0
+      ? 0
+      : (num + (num > 0 ? -1 : 1)) / denom +
           (std::is_signed<T>::value && (num ^ denom) < 0 ? -1 : 1);
 }
 

@@ -16,10 +16,10 @@
 
 #include <folly/executors/GlobalExecutor.h>
 
-#include <folly/VirtualExecutor.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/executors/IOExecutor.h>
 #include <folly/executors/IOThreadPoolExecutor.h>
+#include <folly/executors/VirtualExecutor.h>
 #include <folly/portability/GTest.h>
 #include <folly/synchronization/Baton.h>
 #include <folly/synchronization/SaturatingSemaphore.h>
@@ -119,7 +119,7 @@ TEST(GlobalExecutorTest, GlobalIOExecutor) {
 }
 
 TEST(GlobalExecutorTest, IOThreadCountFlagUnset) {
-  gflags::FlagSaver flagsaver;
+  folly::gflags::FlagSaver flagsaver;
 
   auto io_threadpool = dynamic_cast<folly::IOThreadPoolExecutor*>(
       folly::getGlobalIOExecutor().get());
@@ -128,7 +128,7 @@ TEST(GlobalExecutorTest, IOThreadCountFlagUnset) {
 }
 
 TEST(GlobalExecutorTest, CPUThreadCountFlagUnset) {
-  gflags::FlagSaver flagsaver;
+  folly::gflags::FlagSaver flagsaver;
 
   EXPECT_EQ(
       getGlobalCPUExecutorCounters().numThreads, folly::hardware_concurrency());

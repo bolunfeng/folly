@@ -38,17 +38,66 @@
 #include <folly/lang/Thunk.h>
 #include <folly/memory/Malloc.h>
 #include <folly/portability/Config.h>
+#include <folly/portability/Constexpr.h>
 #include <folly/portability/Malloc.h>
 
 namespace folly {
 
+namespace access {
+
+/// to_address_fn
+/// to_address
+///
+/// mimic: std::to_address (C++20)
+///
+/// adapted from: https://en.cppreference.com/w/cpp/memory/to_address, CC-BY-SA
+struct to_address_fn {
+ private:
+  template <template <typename...> typename T, typename A, typename... B>
+  static tag_t<A> get_first_arg(tag_t<T<A, B...>>);
+  template <typename T>
+  using first_arg_of = type_list_element_t<0, decltype(get_first_arg(tag<T>))>;
+  template <typename T>
+  using detect_element_type = typename T::element_type;
+  template <typename T>
+  using element_type_of =
+      detected_or_t<first_arg_of<T>, detect_element_type, T>;
+
+  template <typename T>
+  using detect_to_address =
+      decltype(std::pointer_traits<T>::to_address(FOLLY_DECLVAL(T const&)));
+
+  template <typename T>
+  static inline constexpr bool use_pointer_traits_to_address = Conjunction<
+      is_detected<element_type_of, T>,
+      is_detected<detect_to_address, T>>::value;
+
+ public:
+  template <typename T>
+  constexpr T* operator()(T* p) const noexcept {
+    static_assert(!std::is_function_v<T>);
+    return p;
+  }
+
+  template <typename T>
+  constexpr auto operator()(T const& p) const noexcept {
+    if constexpr (use_pointer_traits_to_address<T>) {
+      static_assert(noexcept(std::pointer_traits<T>::to_address(p)));
+      return std::pointer_traits<T>::to_address(p);
+    } else {
+      static_assert(noexcept(operator()(p.operator->())));
+      return operator()(p.operator->());
+    }
+  }
+};
+inline constexpr to_address_fn to_address;
+
+} // namespace access
+
 #if (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L) || \
     (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) ||         \
     (defined(__ANDROID__) && (__ANDROID_API__ > 16)) ||         \
-    (defined(__APPLE__) &&                                      \
-     (__MAC_OS_X_VERSION_MIN_REQUIRED >= __MAC_10_6 ||          \
-      __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_3_0)) ||     \
-    defined(__FreeBSD__) || defined(__wasm32__)
+    (defined(__APPLE__)) || defined(__FreeBSD__) || defined(__wasm32__)
 
 inline void* aligned_malloc(size_t size, size_t align) {
   // use posix_memalign, but mimic the behaviour of memalign
@@ -286,6 +335,14 @@ std::shared_ptr<U> to_shared_ptr_aliasing(std::shared_ptr<T> const& r, U* ptr) {
 }
 
 /**
+ *  to_shared_ptr_non_owning
+ */
+template <typename U>
+std::shared_ptr<U> to_shared_ptr_non_owning(U* ptr) {
+  return std::shared_ptr<U>(std::shared_ptr<void>{}, ptr);
+}
+
+/**
  *  to_weak_ptr
  *
  *  Make a weak_ptr and return it from a shared_ptr without specifying the
@@ -394,6 +451,19 @@ std::unique_ptr<T> copy_through_unique_ptr(const std::unique_ptr<T>& t) {
       !std::is_polymorphic<T>::value || std::is_final<T>::value,
       "possibly slicing");
   return t ? std::make_unique<T>(*t) : nullptr;
+}
+
+/**
+ *  copy_through_shared_ptr
+ *
+ *  If the argument is nonnull, allocates a copy of its pointee.
+ */
+template <typename T>
+std::shared_ptr<T> copy_through_shared_ptr(const std::shared_ptr<T>& t) {
+  static_assert(
+      !std::is_polymorphic<T>::value || std::is_final<T>::value,
+      "possibly slicing");
+  return t ? std::make_shared<T>(*t) : nullptr;
 }
 
 //  erased_unique_ptr

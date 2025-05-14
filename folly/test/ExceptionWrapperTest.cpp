@@ -100,6 +100,21 @@ TEST(ExceptionWrapper, members) {
   EXPECT_EQ(ew.class_name(), kRuntimeErrorClassName);
 }
 
+TEST(ExceptionWrapper, equality) {
+  auto ew = make_exception_wrapper<std::runtime_error>("wat");
+  EXPECT_EQ(ew, ew);
+
+  auto ewSame = ew;
+  EXPECT_EQ(ew, ewSame);
+
+  // Before C++20, operator!= is not defaulted based on operator==
+#if FOLLY_CPLUSPLUS >= 202002L
+  auto ewDiff = make_exception_wrapper<std::runtime_error>("wat");
+  EXPECT_NE(ewDiff, ew);
+  EXPECT_NE(ewDiff, ewSame);
+#endif
+}
+
 TEST(ExceptionWrapper, tryAndCatchTest) {
   auto ew4 = try_and_catch([] { throw 17; });
   EXPECT_TRUE(bool(ew4));
@@ -113,19 +128,22 @@ TEST(ExceptionWrapper, withExceptionTest) {
   EXPECT_TRUE(bool(ew));
   EXPECT_EQ(ew.what(), kIntExceptionClassName + ": int == 23");
   EXPECT_EQ(ew.class_name(), kIntExceptionClassName);
-  EXPECT_TRUE(ew.with_exception(
-      [&](const IntException& ie) { EXPECT_EQ(ie.getInt(), expected); }));
+  EXPECT_TRUE(ew.with_exception([&](const IntException& ie) {
+    EXPECT_EQ(ie.getInt(), expected);
+  }));
 
   // Test with const this.  If this compiles and does not crash due to
   // infinite loop when it runs, it succeeds.
   const exception_wrapper& cew = ew;
-  EXPECT_TRUE(
-      cew.with_exception([&](const IntException& /* ie */) { SUCCEED(); }));
+  EXPECT_TRUE(cew.with_exception([&](const IntException& /* ie */) {
+    SUCCEED();
+  }));
 
   // Test with empty ew.
   exception_wrapper empty_ew;
-  EXPECT_FALSE(
-      empty_ew.with_exception([&](const std::exception& /* ie */) { FAIL(); }));
+  EXPECT_FALSE(empty_ew.with_exception([&](const std::exception& /* ie */) {
+    FAIL();
+  }));
 
   // Testing with const exception_wrapper; sanity check first:
   EXPECT_FALSE(cew.with_exception([&](const std::runtime_error&) {}));
@@ -371,6 +389,66 @@ TEST(ExceptionWrapper, withExceptionPtrAnyNilTest) {
   EXPECT_FALSE(ew.is_compatible_with<int>());
 }
 
+TEST(ExceptionWrapper, get_exception_from_exception_wrapper) {
+  static_assert(
+      std::is_invocable_v<
+          get_exception_fn<std::exception>,
+          const exception_wrapper&>);
+  static_assert(
+      std::is_invocable_v<
+          get_mutable_exception_fn<std::exception>,
+          exception_wrapper&>);
+  static_assert(
+      !std::is_invocable_v<
+          get_mutable_exception_fn<std::exception>,
+          const exception_wrapper&>);
+
+  // Unsafe to extract a pointer out of rvalues
+  static_assert(
+      !std::is_invocable_v<
+          get_exception_fn<std::exception>,
+          const exception_wrapper&&>);
+  static_assert(
+      !std::is_invocable_v<
+          get_mutable_exception_fn<std::exception>,
+          exception_wrapper&&>);
+
+  auto ew = make_exception_wrapper<std::runtime_error>("foo");
+
+  EXPECT_EQ(nullptr, get_exception<std::system_error>(ew));
+  EXPECT_EQ(nullptr, get_mutable_exception<std::system_error>(ew));
+
+  EXPECT_STREQ("foo", get_exception<std::exception>(ew)->what());
+  EXPECT_STREQ("foo", get_exception<const std::exception>(ew)->what());
+  EXPECT_STREQ("foo", get_exception<>(ew)->what());
+  EXPECT_STREQ("foo", get_exception<>(std::as_const(ew))->what());
+  EXPECT_STREQ("foo", get_mutable_exception<>(ew)->what());
+
+  EXPECT_STREQ("foo", get_exception<std::runtime_error>(ew)->what());
+  EXPECT_STREQ("foo", get_mutable_exception<std::runtime_error>(ew)->what());
+
+  auto expected_p = ew.get_exception<std::runtime_error>();
+  EXPECT_EQ(expected_p, get_exception<std::runtime_error>(ew));
+  EXPECT_EQ(expected_p, get_mutable_exception<std::runtime_error>(ew));
+
+  static_assert(
+      std::is_same_v<
+          const std::runtime_error*,
+          decltype(get_exception<std::runtime_error>(ew))>);
+  static_assert(
+      std::is_same_v<
+          const std::runtime_error*,
+          decltype(get_exception<const std::runtime_error>(ew))>);
+  static_assert(
+      std::is_same_v<
+          const std::runtime_error*,
+          decltype(get_exception<std::runtime_error>(std::as_const(ew)))>);
+  static_assert(
+      std::is_same_v<
+          std::runtime_error*,
+          decltype(get_mutable_exception<std::runtime_error>(ew))>);
+}
+
 TEST(ExceptionWrapper, withExceptionDeduction) {
   auto ew = make_exception_wrapper<std::runtime_error>("hi");
   EXPECT_TRUE(ew.with_exception([](std::runtime_error&) {}));
@@ -473,7 +551,7 @@ namespace {
 struct ThrownException {};
 struct InSituException : std::exception {
   InSituException() = default;
-  InSituException(const InSituException&) throw() {}
+  InSituException(const InSituException&) noexcept {}
 };
 struct OnHeapException : std::exception {
   OnHeapException() = default;
@@ -766,6 +844,5 @@ TEST(ExceptionWrapper, selfSwapTest) {
 
 TEST(ExceptionWrapper, terminateWithTest) {
   auto ew = make_exception_wrapper<int>(42);
-  EXPECT_DEATH(
-      try { ew.terminate_with(); } catch (...){}, "int");
+  EXPECT_DEATH(try { ew.terminate_with(); } catch (...){}, "int");
 }

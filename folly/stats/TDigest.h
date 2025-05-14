@@ -75,6 +75,11 @@ class TDigest {
     double weight_;
   };
 
+  class MergeWorkingBuffer {
+    friend TDigest;
+    std::vector<Centroid> buf;
+  };
+
   explicit TDigest(size_t maxSize = 100)
       : maxSize_(maxSize), sum_(0.0), count_(0.0), max_(NAN), min_(NAN) {}
 
@@ -102,6 +107,16 @@ class TDigest {
    * digests.
    */
   static TDigest merge(Range<const TDigest*> digests);
+  static TDigest merge(Range<const TDigest**> digests);
+  static TDigest merge(const TDigest& d1, const TDigest& d2);
+
+  /*
+   * Merge in place, using the provided storage.
+   */
+  void merge(
+      sorted_equivalent_t,
+      Range<const double*> sortedValues,
+      MergeWorkingBuffer& workingBuffer);
 
   /*
    * Estimates the value of the given quantile.
@@ -125,6 +140,14 @@ class TDigest {
   size_t maxSize() const { return maxSize_; }
 
  private:
+  void internalMerge(
+      TDigest& dst,
+      Range<const double*> sortedValues,
+      std::vector<Centroid>& workingBuffer) const;
+
+  template <class T>
+  static TDigest mergeImpl(Range<T> ds);
+
   std::vector<Centroid> centroids_;
   size_t maxSize_;
   double sum_;

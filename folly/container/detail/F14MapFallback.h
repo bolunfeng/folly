@@ -156,7 +156,7 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
   std::pair<iterator, bool> insert_or_assign(key_type const& key, M2&& obj) {
     auto rv = try_emplace(key, std::forward<M2>(obj));
     if (!rv.second) {
-      rv.first->second = std::forward<M>(obj);
+      rv.first->second = std::forward<M2>(obj);
     }
     return rv;
   }
@@ -165,7 +165,7 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
   std::pair<iterator, bool> insert_or_assign(key_type&& key, M2&& obj) {
     auto rv = try_emplace(std::move(key), std::forward<M2>(obj));
     if (!rv.second) {
-      rv.first->second = std::forward<M>(obj);
+      rv.first->second = std::forward<M2>(obj);
     }
     return rv;
   }
@@ -506,8 +506,9 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
   // exact for libstdc++, approximate for others
   std::size_t getAllocatedMemorySize() const {
     std::size_t rv = 0;
-    visitAllocationClasses(
-        [&](std::size_t bytes, std::size_t n) { rv += bytes * n; });
+    visitAllocationClasses([&](std::size_t bytes, std::size_t n) {
+      rv += bytes * n;
+    });
     return rv;
   }
 
@@ -571,9 +572,17 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
   F14HashToken prehash(key_type const&) const {
     return {}; // Ignored.
   }
+  F14HashToken prehash(key_type const&, std::size_t) const {
+    return {}; // Ignored.
+  }
 
   template <typename K2>
   EnableHeterogeneousFind<K2, F14HashToken> prehash(K2 const&) const {
+    return {}; // Ignored.
+  }
+  template <typename K2>
+  EnableHeterogeneousFind<K2, F14HashToken> prehash(
+      K2 const&, std::size_t) const {
     return {}; // Ignored.
   }
 

@@ -115,11 +115,17 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+
+#if __has_include(<charconv>)
+#include <charconv>
+#endif
 
 #include <double-conversion/double-conversion.h> // V8 JavaScript implementation
 
@@ -235,7 +241,7 @@ template <class Tgt, class Src>
 typename std::enable_if<
     std::is_same<Tgt, typename std::decay<Src>::type>::value,
     Expected<Tgt, ConversionCode>>::type
-tryTo(Src&& value) {
+tryTo(Src&& value) noexcept {
   return static_cast<Src&&>(value);
 }
 
@@ -264,7 +270,7 @@ typename std::enable_if<
     is_arithmetic_v<Src> && !std::is_same<Tgt, Src>::value &&
         std::is_same<Tgt, bool>::value,
     Expected<Tgt, ConversionCode>>::type
-tryTo(const Src& value) {
+tryTo(const Src& value) noexcept {
   return value != Src();
 }
 
@@ -555,8 +561,9 @@ typename std::enable_if<
     sizeof(Src) >= 4>::type
 toAppend(Src value, Tgt* result) {
   char buffer[to_ascii_size_max_decimal<uint64_t>];
-  auto uvalue = value < 0 ? ~static_cast<uint64_t>(value) + 1
-                          : static_cast<uint64_t>(value);
+  auto uvalue = value < 0
+      ? ~static_cast<uint64_t>(value) + 1
+      : static_cast<uint64_t>(value);
   if (value < 0) {
     result->push_back('-');
   }
@@ -569,8 +576,9 @@ typename std::enable_if<
         sizeof(Src) < 16,
     size_t>::type
 estimateSpaceNeeded(Src value) {
-  auto uvalue = value < 0 ? ~static_cast<uint64_t>(value) + 1
-                          : static_cast<uint64_t>(value);
+  auto uvalue = value < 0
+      ? ~static_cast<uint64_t>(value) + 1
+      : static_cast<uint64_t>(value);
   return size_t(value < 0) + to_ascii_size_decimal(uvalue);
 }
 
@@ -638,25 +646,126 @@ estimateSpaceNeeded(Src value) {
  * Conversions from floating-point types to string types.
  */
 
+/// Operating mode for the floating point type version of
+/// `folly::ToAppend`. This is modeled after
+/// `double_conversion::DoubleToStringConverter::DtoaMode`.
+/// Dtoa is an acryonym for Double to ASCII.
+enum class DtoaMode {
+  /// Outputs the shortest representation of a `double`.
+  /// The output is either in decimal or exponential notation; which ever is
+  /// shortest.
+  SHORTEST,
+  /// Outputs the shortest representation of a `float`.
+  /// This outputs in either decimal or exponential notation, which ever is
+  /// shortest.
+  SHORTEST_SINGLE,
+  /// Outputs fixed precision after the decimal point. Similar to
+  /// `printf`'s %f.
+  /// The output is in decimal notation.
+  /// Use the `numDigits` parameter to specify the precision.
+  FIXED,
+  /// Outputs with a precision that is independent of the decimal point.
+  /// The outputs is either decimal or exponential notation, depending on the
+  /// value and the precision.
+  /// Similar to `printf`'s %g formating.
+  /// Use the `numDigits` parameter to specify the precision.
+  PRECISION,
+};
+
+/// Flags for the floating point type version of `folly::ToAppend`.
+/// This is modeled after `double_conversion::DoubleToStringConverter::Flags`.
+/// Dtoa is an acryonym for Double to ASCII.
+/// This enum is used to store bit wise flags, so a variable of this type may be
+/// a bitwise combination of these definitions.
+enum class DtoaFlags {
+  NO_FLAGS = 0,
+  /// Emits a plus sign for positive exponents. e.g., 1.2e+3
+  EMIT_POSITIVE_EXPONENT_SIGN = 1,
+  /// Emits a trailing decimal point. e.g., 123.
+  EMIT_TRAILING_DECIMAL_POINT = 2,
+  /// Emits a trailing decimal point. e.g., 123.0
+  /// Requires `EMIT_TRAILING_DECIMAL_POINT` to be set.
+  EMIT_TRAILING_ZERO_AFTER_POINT = 4,
+  /// -0.0 outputs as 0.0
+  UNIQUE_ZERO = 8,
+  /// Trailing zeros are removed from the fractional portion
+  /// of the result in precision mode. Matches `printf`'s %g.
+  /// When `EMIT_TRAILING_ZERO_AFTER_POINT` is also given, one trailing zero is
+  /// preserved.
+  NO_TRAILING_ZERO = 16,
+};
+
+constexpr DtoaFlags operator|(DtoaFlags a, DtoaFlags b) {
+  return static_cast<DtoaFlags>(to_underlying(a) | to_underlying(b));
+}
+
+constexpr DtoaFlags operator&(DtoaFlags a, DtoaFlags b) {
+  return static_cast<DtoaFlags>(to_underlying(a) & to_underlying(b));
+}
+
 namespace detail {
 constexpr int kConvMaxDecimalInShortestLow = -6;
+/// 10^kConvMaxDecimalInShortestLow. Replace with constexpr std::pow in C++26.
+constexpr double kConvMaxDecimalInShortestLowValue = 0.000001;
 constexpr int kConvMaxDecimalInShortestHigh = 21;
+/// 10^kConvMaxDecimalInShortestHigh. Replace with constexpr std::pow in C++26.
+constexpr double kConvMaxDecimalInShortestHighValue =
+    1'000'000'000'000'000'000'000.0;
+constexpr int kBase10MaximalLength = 17;
+
+constexpr int kConvMaxFixedDigitsAfterPoint =
+    double_conversion::DoubleToStringConverter::kMaxFixedDigitsAfterPoint;
+constexpr int kConvMaxPrecisionDigits =
+    double_conversion::DoubleToStringConverter::kMaxPrecisionDigits;
+
+/// Converts `DtoaMode` to
+/// `double_conversion::DoubleToStringConverter::DtoaMode`.
+/// This is temporary until
+/// `double_conversion::DoubleToStringConverter::DtoaMode` is removed.
+constexpr double_conversion::DoubleToStringConverter::DtoaMode convert(
+    DtoaMode mode) {
+  switch (mode) {
+    case DtoaMode::SHORTEST:
+      return double_conversion::DoubleToStringConverter::SHORTEST;
+    case DtoaMode::SHORTEST_SINGLE:
+      return double_conversion::DoubleToStringConverter::SHORTEST_SINGLE;
+    case DtoaMode::FIXED:
+      return double_conversion::DoubleToStringConverter::FIXED;
+    case DtoaMode::PRECISION:
+      return double_conversion::DoubleToStringConverter::PRECISION;
+  }
+
+  assert(false);
+  // Default to PRECISION per exising behavior.
+  return double_conversion::DoubleToStringConverter::PRECISION;
+}
+
+/// Converts `DtoaFlags` to
+/// `double_conversion::DoubleToStringConverter::DtoaFlags`.
+/// This is temporary until
+/// `double_conversion::DoubleToStringConverter::DtoaFlags` is removed.
+constexpr double_conversion::DoubleToStringConverter::Flags convert(
+    DtoaFlags flags) {
+  return static_cast<double_conversion::DoubleToStringConverter::Flags>(flags);
+}
 } // namespace detail
 
-/** Wrapper around DoubleToStringConverter */
+/**
+ * `numDigits` is only used with `FIXED` && `PRECISION`.
+ */
 template <class Tgt, class Src>
 typename std::enable_if<
     std::is_floating_point<Src>::value && IsSomeString<Tgt>::value>::type
 toAppend(
     Src value,
     Tgt* result,
-    double_conversion::DoubleToStringConverter::DtoaMode mode,
+    DtoaMode mode,
     unsigned int numDigits,
-    double_conversion::DoubleToStringConverter::Flags flags =
-        double_conversion::DoubleToStringConverter::NO_FLAGS) {
-  using namespace double_conversion;
-  DoubleToStringConverter conv(
-      flags,
+    DtoaFlags flags = DtoaFlags::NO_FLAGS) {
+  double_conversion::DoubleToStringConverter::Flags dcFlags =
+      detail::convert(flags);
+  double_conversion::DoubleToStringConverter conv(
+      dcFlags,
       "Infinity",
       "NaN",
       'E',
@@ -665,22 +774,24 @@ toAppend(
       6, // max leading padding zeros
       1); // max trailing padding zeros
   char buffer[256];
-  StringBuilder builder(buffer, sizeof(buffer));
+  double_conversion::StringBuilder builder(buffer, sizeof(buffer));
+  double_conversion::DoubleToStringConverter::DtoaMode dcMode =
+      detail::convert(mode);
   FOLLY_PUSH_WARNING
   FOLLY_CLANG_DISABLE_WARNING("-Wcovered-switch-default")
-  switch (mode) {
-    case DoubleToStringConverter::SHORTEST:
+  switch (dcMode) {
+    case double_conversion::DoubleToStringConverter::SHORTEST:
       conv.ToShortest(value, &builder);
       break;
-    case DoubleToStringConverter::SHORTEST_SINGLE:
+    case double_conversion::DoubleToStringConverter::SHORTEST_SINGLE:
       conv.ToShortestSingle(static_cast<float>(value), &builder);
       break;
-    case DoubleToStringConverter::FIXED:
+    case double_conversion::DoubleToStringConverter::FIXED:
       conv.ToFixed(value, int(numDigits), &builder);
       break;
-    case DoubleToStringConverter::PRECISION:
+    case double_conversion::DoubleToStringConverter::PRECISION:
     default:
-      assert(mode == DoubleToStringConverter::PRECISION);
+      assert(dcMode == double_conversion::DoubleToStringConverter::PRECISION);
       conv.ToPrecision(value, int(numDigits), &builder);
       break;
   }
@@ -697,8 +808,7 @@ template <class Tgt, class Src>
 typename std::enable_if<
     std::is_floating_point<Src>::value && IsSomeString<Tgt>::value>::type
 toAppend(Src value, Tgt* result) {
-  toAppend(
-      value, result, double_conversion::DoubleToStringConverter::SHORTEST, 0);
+  toAppend(value, result, DtoaMode::SHORTEST, 0);
 }
 
 /**
@@ -711,8 +821,7 @@ typename std::enable_if<std::is_floating_point<Src>::value, size_t>::type
 estimateSpaceNeeded(Src value) {
   // kBase10MaximalLength is 17. We add 1 for decimal point,
   // e.g. 10.0/9 is 17 digits and 18 characters, including the decimal point.
-  constexpr int kMaxMantissaSpace =
-      double_conversion::DoubleToStringConverter::kBase10MaximalLength + 1;
+  constexpr int kMaxMantissaSpace = detail::kBase10MaximalLength + 1;
   // strlen("E-") + digits10(numeric_limits<double>::max_exponent10)
   constexpr int kMaxExponentSpace = 2 + 3;
   static const int kMaxPositiveSpace = std::max({
@@ -1080,6 +1189,15 @@ extern template Expected<float, ConversionCode> str_to_floating<float>(
 extern template Expected<double, ConversionCode> str_to_floating<double>(
     StringPiece* src) noexcept;
 
+template <typename T>
+Expected<T, ConversionCode> str_to_floating_fast_float_from_chars(
+    StringPiece* src) noexcept;
+
+extern template Expected<float, ConversionCode>
+str_to_floating_fast_float_from_chars<float>(StringPiece* src) noexcept;
+extern template Expected<double, ConversionCode>
+str_to_floating_fast_float_from_chars<double>(StringPiece* src) noexcept;
+
 template <class Tgt>
 Expected<Tgt, ConversionCode> digits_to(const char* b, const char* e) noexcept;
 
@@ -1187,7 +1305,7 @@ template <typename Tgt>
 typename std::enable_if<
     is_integral_v<Tgt> && !std::is_same<Tgt, bool>::value,
     Expected<Tgt, ConversionCode>>::type
-tryTo(const char* b, const char* e) {
+tryTo(const char* b, const char* e) noexcept {
   return detail::digits_to<Tgt>(b, e);
 }
 
@@ -1213,8 +1331,9 @@ FOLLY_NODISCARD inline typename std::enable_if< //
     is_arithmetic_v<Tgt>,
     Expected<StringPiece, ConversionCode>>::type
 parseTo(StringPiece src, Tgt& out) {
-  return detail::convertTo<Tgt>(&src).then(
-      [&](Tgt res) { return void(out = res), src; });
+  return detail::convertTo<Tgt>(&src).then([&](Tgt res) {
+    return void(out = res), src;
+  });
 }
 
 /**
@@ -1523,7 +1642,7 @@ template <class Tgt>
 inline typename std::enable_if<
     !std::is_same<StringPiece, Tgt>::value,
     Expected<Tgt, detail::ParseToError<Tgt>>>::type
-tryTo(StringPiece src) {
+tryTo(StringPiece src) noexcept {
   Tgt result{};
   using Error = detail::ParseToError<Tgt>;
   using Check = typename std::conditional<
@@ -1571,7 +1690,7 @@ inline
  * check for trailing whitespace.
  */
 template <class Tgt>
-Expected<Tgt, detail::ParseToError<Tgt>> tryTo(StringPiece* src) {
+Expected<Tgt, detail::ParseToError<Tgt>> tryTo(StringPiece* src) noexcept {
   Tgt result;
   return parseTo(*src, result).then([&, src](StringPiece sp) -> Tgt {
     *src = sp;
@@ -1601,7 +1720,7 @@ typename std::enable_if<
     std::is_enum<Src>::value && !std::is_same<Src, Tgt>::value &&
         !std::is_convertible<Tgt, StringPiece>::value,
     Expected<Tgt, ConversionCode>>::type
-tryTo(const Src& value) {
+tryTo(const Src& value) noexcept {
   return tryTo<Tgt>(to_underlying(value));
 }
 
@@ -1610,7 +1729,7 @@ typename std::enable_if<
     !std::is_convertible<Src, StringPiece>::value && std::is_enum<Tgt>::value &&
         !std::is_same<Src, Tgt>::value,
     Expected<Tgt, ConversionCode>>::type
-tryTo(const Src& value) {
+tryTo(const Src& value) noexcept {
   using I = typename std::underlying_type<Tgt>::type;
   return tryTo<I>(value).then([](I i) { return static_cast<Tgt>(i); });
 }

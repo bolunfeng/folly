@@ -113,6 +113,12 @@ FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(EcPoint, EC_POINT, EC_POINT_free);
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(EcdsaSig, ECDSA_SIG, ECDSA_SIG_free);
 #endif
 
+// DSA
+#ifndef OPENSSL_NO_DSA
+FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(Dsa, DSA, DSA_free);
+FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(DsaSig, DSA_SIG, DSA_SIG_free);
+#endif
+
 // BIGNUMs
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(BIGNUM, BIGNUM, BN_clear_free);
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(BNCtx, BN_CTX, BN_CTX_free);
@@ -154,8 +160,8 @@ FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(OcspCertId, OCSP_CERTID, OCSP_CERTID_free);
 //    * BorrowingStackOfX509NameUniquePtr
 // which corresponds to a unique_ptr of `STACK_OF(X509_NAME)` that will invoke
 // the appropriate destructor:
-//    * OwningStackOf* -> Invokes sk_T_free
-//    * BorrowingStackOf* -> Invokes sk_T_pop_free
+//    * OwningStackOf* -> Invokes sk_T_pop_free
+//    * BorrowingStackOf* -> Invokes sk_T_free
 namespace detail {
 template <
     class StackType,
@@ -202,6 +208,7 @@ struct OpenSSLBorrowedStackDestructor {
   FOLLY_SSL_DETAIL_DEFINE_OWNING_STACK_PTR_TYPE(element_alias, element_type)
 
 FOLLY_SSL_DETAIL_DEFINE_STACK_PTR_TYPE(X509Name, X509_NAME);
+FOLLY_SSL_DETAIL_DEFINE_STACK_PTR_TYPE(X509, X509);
 
 #undef FOLLY_SSL_DETAIL_BORROWING_STACK_DESTRUCTOR
 #undef FOLLY_SSL_DETAIL_OWNING_STACK_DESTRUCTOR

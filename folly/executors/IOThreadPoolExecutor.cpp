@@ -214,9 +214,9 @@ std::shared_ptr<ThreadPoolExecutor::Thread> IOThreadPoolExecutor::makeThread() {
 void IOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   this->threadPoolHook_.registerThread();
 
-  const auto ioThread = std::static_pointer_cast<IOThread>(thread);
+  const auto& ioThread = *thisThread_ =
+      std::static_pointer_cast<IOThread>(thread);
   ioThread->eventBase = eventBaseManager_->getEventBase();
-  thisThread_.reset(new std::shared_ptr<IOThread>(ioThread));
 
   auto tid = folly::getOSThreadID();
   if (threadIdCollector_) {
@@ -231,8 +231,9 @@ void IOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   auto idler = std::make_unique<MemoryIdlerTimeout>(ioThread->eventBase);
   ioThread->eventBase->runBeforeLoop(idler.get());
 
-  ioThread->eventBase->runInEventBaseThread(
-      [thread] { thread->startupBaton.post(); });
+  ioThread->eventBase->runInEventBaseThread([thread] {
+    thread->startupBaton.post();
+  });
   {
     ExecutorBlockingGuard guard{
         ExecutorBlockingGuard::TrackTag{}, this, getName()};
@@ -252,7 +253,7 @@ void IOThreadPoolExecutor::threadRun(ThreadPtr thread) {
     }
   }
 
-  std::lock_guard<std::mutex> guard(ioThread->eventBaseShutdownMutex_);
+  std::lock_guard guard(ioThread->eventBaseShutdownMutex_);
   ioThread->eventBase = nullptr;
   eventBaseManager_->clearEventBase();
 }
@@ -270,7 +271,7 @@ void IOThreadPoolExecutor::stopThreads(size_t n) {
     }
     ioThread->shouldRun = false;
     stoppedThreads.push_back(ioThread);
-    std::lock_guard<std::mutex> guard(ioThread->eventBaseShutdownMutex_);
+    std::lock_guard guard(ioThread->eventBaseShutdownMutex_);
     if (ioThread->eventBase) {
       ioThread->eventBase->terminateLoopSoon();
     }

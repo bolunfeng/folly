@@ -27,7 +27,7 @@
  * Interface for Zlib-specific codec initialization.
  */
 namespace folly {
-namespace io {
+namespace compression {
 namespace zlib {
 
 struct Options {
@@ -121,7 +121,7 @@ std::unique_ptr<StreamCodec> getStreamCodec(
     Options options = Options(), int level = COMPRESSION_LEVEL_DEFAULT);
 
 } // namespace zlib
-} // namespace io
+} // namespace compression
 } // namespace folly
 
 #endif // FOLLY_HAVE_LIBZ

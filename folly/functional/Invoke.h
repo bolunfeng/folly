@@ -33,8 +33,6 @@
 #include <folly/lang/CustomizationPoint.h>
 
 #define FOLLY_DETAIL_FORWARD_REF(a) static_cast<decltype(a)&&>(a)
-#define FOLLY_DETAIL_FORWARD_BODY(e) \
-  noexcept(noexcept(e))->decltype(e) { return e; }
 
 /**
  *  include or backport:
@@ -134,19 +132,31 @@ template <typename F>
 struct traits {
   template <typename... A>
   using result = decltype( //
-      FOLLY_DECLVAL(F &&)(FOLLY_DECLVAL(A &&)...));
-  template <typename... A>
-  static constexpr bool nothrow = noexcept( //
       FOLLY_DECLVAL(F&&)(FOLLY_DECLVAL(A&&)...));
+#if defined(_MSC_VER) && defined(__NVCC__)
+  template <typename... A>
+  using nothrow_t = std::bool_constant<noexcept( //
+      FOLLY_DECLVAL(F&&)(FOLLY_DECLVAL(A&&)...))>;
+#else
+  template <typename... A>
+  static constexpr bool nothrow_v = noexcept( //
+      FOLLY_DECLVAL(F&&)(FOLLY_DECLVAL(A&&)...));
+#endif
 };
 template <typename P>
 struct traits_member_ptr {
   template <typename... A>
   using result = decltype( //
-      std::mem_fn(FOLLY_DECLVAL(P))(FOLLY_DECLVAL(A &&)...));
-  template <typename... A>
-  static constexpr bool nothrow = noexcept( //
       std::mem_fn(FOLLY_DECLVAL(P))(FOLLY_DECLVAL(A&&)...));
+#if defined(_MSC_VER) && defined(__NVCC__)
+  template <typename... A>
+  using nothrow_t = std::bool_constant<noexcept( //
+      std::mem_fn(FOLLY_DECLVAL(P))(FOLLY_DECLVAL(A&&)...))>;
+#else
+  template <typename... A>
+  static constexpr bool nothrow_v = noexcept( //
+      std::mem_fn(FOLLY_DECLVAL(P))(FOLLY_DECLVAL(A&&)...));
+#endif
 };
 template <typename M, typename C>
 struct traits<M C::*> : traits_member_ptr<M C::*> {};
@@ -160,6 +170,14 @@ template <typename M, typename C>
 struct traits<M C::*&&> : traits_member_ptr<M C::*> {};
 template <typename M, typename C>
 struct traits<M C::*const&&> : traits_member_ptr<M C::*> {};
+
+#if defined(_MSC_VER) && defined(__NVCC__)
+template <typename P, typename... A>
+using is_nothrow = traits<P>::template nothrow_t<A...>;
+#else
+template <typename P, typename... A>
+using is_nothrow = std::bool_constant<traits<P>::template nothrow_v<A...>>;
+#endif
 
 template <bool IsVoid>
 struct conv_r_;
@@ -224,7 +242,7 @@ inline constexpr bool is_nothrow_invocable_v = ok_<bool, F, A...>{false};
 template <typename F, typename... A>
 inline constexpr bool
     is_nothrow_invocable_v<void_t<invoke_result_t<F, A...>>, F, A...> =
-        traits<F>::template nothrow<A...>;
+        is_nothrow<F, A...>::value;
 
 template <typename Void, typename R, typename F, typename... A>
 inline constexpr bool is_nothrow_invocable_r_v = ok_<bool, R, F, A...>{false};
@@ -233,7 +251,7 @@ inline constexpr bool is_nothrow_invocable_r_v = ok_<bool, R, F, A...>{false};
 template <typename R, typename F, typename... A>
 inline constexpr bool
     is_nothrow_invocable_r_v<void_t<invoke_result_t<F, A...>>, R, F, A...> =
-        traits<F>::template nothrow<A...> &&
+        is_nothrow<F, A...>::value &&
             conv_r_v_<true, R, invoke_result_t<F, A...>>;
 // clang-format on
 
@@ -606,12 +624,11 @@ struct invoke_first_match : private Invoker... {
 #define FOLLY_CREATE_MEMBER_INVOKER(classname, membername)                 \
   struct classname {                                                       \
     template <typename O, typename... Args>                                \
-    [[maybe_unused]] FOLLY_ERASE_HACK_GCC constexpr auto operator()(       \
-        O&& o, Args&&... args) const                                       \
-        noexcept(noexcept(                                                 \
-            static_cast<O&&>(o).membername(static_cast<Args&&>(args)...))) \
-            -> decltype(static_cast<O&&>(o).membername(                    \
-                static_cast<Args&&>(args)...)) {                           \
+    [[maybe_unused]] FOLLY_ERASE_HACK_GCC constexpr auto                   \
+    operator()(O&& o, Args&&... args) const noexcept(noexcept(             \
+        static_cast<O&&>(o).membername(static_cast<Args&&>(args)...)))     \
+        -> decltype(static_cast<O&&>(o).membername(                        \
+            static_cast<Args&&>(args)...)) {                               \
       return static_cast<O&&>(o).membername(static_cast<Args&&>(args)...); \
     }                                                                      \
   }
@@ -628,6 +645,23 @@ struct invoke_first_match : private Invoker... {
 #define FOLLY_CREATE_MEMBER_INVOKER_SUITE(membername)       \
   FOLLY_CREATE_MEMBER_INVOKER(membername##_fn, membername); \
   [[maybe_unused]] inline constexpr membername##_fn membername {}
+
+namespace folly {
+// Power users can call `is_instantiation_of<invoke_member_wrapper_fn, T>`
+// to ascertain that a callable was made via `FOLLY_INVOKE_MEMBER`.  This
+// can be important e.g. when you want to be sure that the first argument
+// of the callable becomes the implicit object parameter of the class.
+template <typename F>
+struct invoke_member_wrapper_fn : private F {
+  template <typename G, typename = decltype(F(FOLLY_DECLVAL(G&&)))>
+  constexpr explicit invoke_member_wrapper_fn(G&& f) noexcept(
+      noexcept(F(static_cast<G&&>(f))))
+      : F(static_cast<G&&>(f)) {}
+  using F::operator();
+};
+template <typename F>
+invoke_member_wrapper_fn(F) -> invoke_member_wrapper_fn<F>;
+} // namespace folly
 
 /***
  *  FOLLY_INVOKE_MEMBER
@@ -647,16 +681,17 @@ struct invoke_first_match : private Invoker... {
  *
  *    std::invoke(FOLLY_INVOKE_MEMBER(find), map, key)
  *
- *  As an implementation detail, the resulting callable is a lambda. This has
- *  two observable consequences.
+ *  As an implementation detail, the resulting callable uses a lambda.  This
+ *  has two observable consequences.
  *  * Since C++17 only, lambda invocations may be marked constexpr.
  *  * Since C++20 only, lambda definitions may appear in an unevaluated context,
  *    namely, in an operand to decltype, noexcept, sizeof, or typeid.
  */
-#define FOLLY_INVOKE_MEMBER(membername)                                                      \
-  [](auto&& __folly_param_o, auto&&... __folly_param_a) constexpr FOLLY_DETAIL_FORWARD_BODY( \
-      FOLLY_DETAIL_FORWARD_REF(__folly_param_o)                                              \
-          .membername(FOLLY_DETAIL_FORWARD_REF(__folly_param_a)...))
+#define FOLLY_INVOKE_MEMBER(membername)                                                          \
+  ::folly::invoke_member_wrapper_fn(                                                             \
+      [](auto&& __folly_param_o, auto&&... __folly_param_a) constexpr FOLLY_DETAIL_FORWARD_BODY( \
+          FOLLY_DETAIL_FORWARD_REF(__folly_param_o)                                              \
+              .membername(FOLLY_DETAIL_FORWARD_REF(__folly_param_a)...)))
 
 /***
  *  FOLLY_CREATE_STATIC_MEMBER_INVOKER
@@ -759,10 +794,7 @@ using tag_invoke_result_t = decltype(tag_invoke(
 template <typename Tag, typename... Args>
 auto try_tag_invoke(int) noexcept(
     noexcept(tag_invoke(FOLLY_DECLVAL(Tag&&), FOLLY_DECLVAL(Args&&)...)))
-    -> decltype(
-        static_cast<void>(
-            tag_invoke(FOLLY_DECLVAL(Tag &&), FOLLY_DECLVAL(Args&&)...)),
-        std::true_type{});
+    -> decltype(static_cast<void>(tag_invoke(FOLLY_DECLVAL(Tag&&), FOLLY_DECLVAL(Args&&)...)), std::true_type{});
 
 template <typename Tag, typename... Args>
 std::false_type try_tag_invoke(...) noexcept(false);

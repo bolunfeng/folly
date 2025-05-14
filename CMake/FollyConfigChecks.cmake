@@ -20,6 +20,10 @@ include(CheckSymbolExists)
 include(CheckTypeSize)
 include(CheckCXXCompilerFlag)
 
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND FOLLY_CXX_FLAGS -Wno-psabi)
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   CHECK_INCLUDE_FILE_CXX(malloc_np.h FOLLY_USE_JEMALLOC)
 else()
@@ -92,8 +96,6 @@ check_symbol_exists(preadv sys/uio.h FOLLY_HAVE_PREADV)
 check_symbol_exists(pwritev sys/uio.h FOLLY_HAVE_PWRITEV)
 check_symbol_exists(clock_gettime time.h FOLLY_HAVE_CLOCK_GETTIME)
 check_symbol_exists(pipe2 unistd.h FOLLY_HAVE_PIPE2)
-check_symbol_exists(sendmmsg sys/socket.h FOLLY_HAVE_SENDMMSG)
-check_symbol_exists(recvmmsg sys/socket.h FOLLY_HAVE_RECVMMSG)
 
 check_function_exists(malloc_usable_size FOLLY_HAVE_MALLOC_USABLE_SIZE)
 
@@ -180,30 +182,3 @@ check_cxx_source_runs("
   }"
   HAVE_VSNPRINTF_ERRORS
 )
-
-if (FOLLY_HAVE_LIBGFLAGS)
-  # Older releases of gflags used the namespace "gflags"; newer releases
-  # use "google" but also make symbols available in the deprecated "gflags"
-  # namespace too.  The folly code internally uses "gflags" unless we tell it
-  # otherwise.
-  list(APPEND CMAKE_REQUIRED_LIBRARIES ${FOLLY_LIBGFLAGS_LIBRARY})
-  list(APPEND CMAKE_REQUIRED_INCLUDES ${FOLLY_LIBGFLAGS_INCLUDE})
-  check_cxx_source_compiles("
-    #include <gflags/gflags.h>
-    int main() {
-      gflags::GetArgv();
-      return 0;
-    }
-    "
-    GFLAGS_NAMESPACE_IS_GFLAGS
-  )
-  list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES ${FOLLY_LIBGFLAGS_LIBRARY})
-  list(REMOVE_ITEM CMAKE_REQUIRED_INCLUDES ${FOLLY_LIBGFLAGS_INCLUDE})
-  if (GFLAGS_NAMESPACE_IS_GFLAGS)
-    set(FOLLY_UNUSUAL_GFLAGS_NAMESPACE OFF)
-    set(FOLLY_GFLAGS_NAMESPACE gflags)
-  else()
-    set(FOLLY_UNUSUAL_GFLAGS_NAMESPACE ON)
-    set(FOLLY_GFLAGS_NAMESPACE google)
-  endif()
-endif()

@@ -218,12 +218,18 @@ TEST(IOBuf, PullAndPeek) {
   {
     RWPrivateCursor cursor(iobuf1.get());
     auto b = cursor.peekBytes();
+    EXPECT_EQ(b.data(), cursor.peek().data());
+    EXPECT_EQ(b.size(), cursor.peek().size());
     EXPECT_EQ("he", StringPiece(b));
     cursor.skip(b.size());
     b = cursor.peekBytes();
+    EXPECT_EQ(b.data(), cursor.peek().data());
+    EXPECT_EQ(b.size(), cursor.peek().size());
     EXPECT_EQ("llo ", StringPiece(b));
     cursor.skip(b.size());
     b = cursor.peekBytes();
+    EXPECT_EQ(b.data(), cursor.peek().data());
+    EXPECT_EQ(b.size(), cursor.peek().size());
     EXPECT_EQ("world", StringPiece(b));
     cursor.skip(b.size());
     EXPECT_EQ(3, iobuf1->countChainElements());
@@ -234,6 +240,8 @@ TEST(IOBuf, PullAndPeek) {
     RWPrivateCursor cursor(iobuf1.get());
     cursor.gather(11);
     auto b = cursor.peekBytes();
+    EXPECT_EQ(b.data(), cursor.peek().data());
+    EXPECT_EQ(b.size(), cursor.peek().size());
     EXPECT_EQ("hello world", StringPiece(b));
     EXPECT_EQ(1, iobuf1->countChainElements());
     EXPECT_EQ(11, iobuf1->computeChainDataLength());
@@ -545,7 +553,7 @@ TEST(IOBuf, Printf) {
       "test32this string is longer than our original "
       "allocation size,and will therefore require a "
       "new allocation 0x12345678",
-      head.moveToFbString().toStdString());
+      head.to<std::string>());
 }
 
 TEST(IOBuf, Format) {
@@ -702,6 +710,23 @@ TEST(IOBuf, QueueAppenderTrimEnd) {
   EXPECT_EQ(nullptr, queue.front());
 
   EXPECT_THROW(app.trimEnd(100), std::underflow_error);
+}
+
+TEST(IOBuf, QueueAppenderEnsureAtMost) {
+  folly::IOBufQueue queue;
+  constexpr size_t kInitialCapacity = 128;
+  constexpr size_t kMaxCapacity = 800;
+
+  QueueAppender app{&queue, kInitialCapacity, kMaxCapacity};
+
+  app.ensure(kInitialCapacity); // won't grow
+  EXPECT_EQ(kInitialCapacity, app.length());
+  app.ensure(kInitialCapacity + 1); // will grow
+  EXPECT_LE(kInitialCapacity + 1, app.length());
+  app.ensureWithinMaxGrowth(kMaxCapacity * 2); // will grow up to kMaxCapacity
+  EXPECT_EQ(kMaxCapacity, app.length());
+  app.ensure(kMaxCapacity + 1); // will grow beyond kMaxCapacity
+  EXPECT_LE(kMaxCapacity + 1, app.length());
 }
 
 TEST(IOBuf, CursorOperators) {
@@ -1560,12 +1585,18 @@ TEST(IOBuf, BoundedCursorPullAndPeek) {
   {
     Cursor subCursor(iobuf1.get(), 13);
     auto b = subCursor.peekBytes();
+    EXPECT_EQ(b.data(), subCursor.peek().data());
+    EXPECT_EQ(b.size(), subCursor.peek().size());
     EXPECT_EQ("he", StringPiece(b));
     subCursor.skip(b.size());
     b = subCursor.peekBytes();
+    EXPECT_EQ(b.data(), subCursor.peek().data());
+    EXPECT_EQ(b.size(), subCursor.peek().size());
     EXPECT_EQ("llo ", StringPiece(b));
     subCursor.skip(b.size());
     b = subCursor.peekBytes();
+    EXPECT_EQ(b.data(), subCursor.peek().data());
+    EXPECT_EQ(b.size(), subCursor.peek().size());
     EXPECT_EQ("world a", StringPiece(b));
     subCursor.skip(b.size());
     EXPECT_EQ(3, iobuf1->countChainElements());

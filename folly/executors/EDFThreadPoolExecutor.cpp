@@ -31,9 +31,15 @@
 #include <glog/logging.h>
 #include <folly/ScopeGuard.h>
 #include <folly/concurrency/ProcessLocalUniqueId.h>
+#include <folly/portability/GFlags.h>
 #include <folly/synchronization/LifoSem.h>
 #include <folly/synchronization/ThrottledLifoSem.h>
 #include <folly/tracing/StaticTracepoint.h>
+
+FOLLY_GFLAGS_DEFINE_bool(
+    folly_edfthreadpoolexecutor_use_throttled_lifo_sem,
+    true,
+    "EDFThreadPoolExecutor will use ThrottledLifoSem by default");
 
 namespace folly {
 
@@ -256,6 +262,13 @@ class EDFThreadPoolExecutor::TaskQueue {
 
 /* static */ std::unique_ptr<EDFThreadPoolSemaphore>
 EDFThreadPoolExecutor::makeDefaultSemaphore() {
+  return FLAGS_folly_edfthreadpoolexecutor_use_throttled_lifo_sem
+      ? makeThrottledLifoSemSemaphore()
+      : makeLifoSemSemaphore();
+}
+
+/* static */ std::unique_ptr<EDFThreadPoolSemaphore>
+EDFThreadPoolExecutor::makeLifoSemSemaphore() {
   return std::make_unique<EDFThreadPoolSemaphoreImpl<LifoSem>>();
 }
 
@@ -322,6 +335,10 @@ void EDFThreadPoolExecutor::add(std::vector<Func> fs, uint64_t deadline) {
   }
 }
 
+size_t EDFThreadPoolExecutor::getTaskQueueSize() const {
+  return taskQueue_->size();
+}
+
 void EDFThreadPoolExecutor::threadRun(ThreadPtr thread) {
   this->threadPoolHook_.registerThread();
   ExecutorBlockingGuard guard{
@@ -362,8 +379,9 @@ void EDFThreadPoolExecutor::threadRun(ThreadPtr thread) {
         taskInfo.enqueueTime.time_since_epoch().count(),
         taskInfo.waitTime.count(),
         taskInfo.taskId);
-    forEachTaskObserver(
-        [&](auto& observer) { observer.taskDequeued(taskInfo); });
+    forEachTaskObserver([&](auto& observer) {
+      observer.taskDequeued(taskInfo);
+    });
 
     invokeCatchingExns("EDFThreadPoolExecutor: func", [&] {
       std::exchange(task, {})->run(iter);
@@ -379,8 +397,9 @@ void EDFThreadPoolExecutor::threadRun(ThreadPtr thread) {
         taskInfo.waitTime.count(),
         taskInfo.runTime.count(),
         taskInfo.taskId);
-    forEachTaskObserver(
-        [&](auto& observer) { observer.taskProcessed(taskInfo); });
+    forEachTaskObserver([&](auto& observer) {
+      observer.taskProcessed(taskInfo);
+    });
 
     thread->idle.store(true, std::memory_order_relaxed);
     thread->lastActiveTime.store(
@@ -396,7 +415,7 @@ void EDFThreadPoolExecutor::stopThreads(std::size_t numThreads) {
 
 // threadListLock_ is read (or write) locked.
 std::size_t EDFThreadPoolExecutor::getPendingTaskCountImpl() const {
-  return taskQueue_->size();
+  return getTaskQueueSize();
 }
 
 bool EDFThreadPoolExecutor::shouldStop() {
@@ -430,7 +449,9 @@ std::shared_ptr<EDFThreadPoolExecutor::Task> EDFThreadPoolExecutor::take() {
   // No tasks on the horizon, so go sleep
   numIdleThreads_.fetch_add(1, std::memory_order_seq_cst);
 
-  SCOPE_EXIT { numIdleThreads_.fetch_sub(1, std::memory_order_seq_cst); };
+  SCOPE_EXIT {
+    numIdleThreads_.fetch_sub(1, std::memory_order_seq_cst);
+  };
 
   for (;;) {
     if (FOLLY_UNLIKELY(shouldStop())) {

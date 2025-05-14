@@ -44,7 +44,7 @@ void runTestTag(int iters, int numThreads) {
       // notify if all the threads have created the t1
       bool notify = false;
       {
-        std::lock_guard<std::mutex> lk(m);
+        std::lock_guard lk(m);
         if (++numRunning == numThreads) {
           notify = true;
         }
@@ -56,7 +56,7 @@ void runTestTag(int iters, int numThreads) {
 
       // now wait
       {
-        std::unique_lock<std::mutex> lk(mw);
+        std::unique_lock lk(mw);
         cvw.wait(lk, [&]() { return !running; });
       }
     }));
@@ -64,7 +64,7 @@ void runTestTag(int iters, int numThreads) {
 
   // wait for the threads to create the t1
   {
-    std::unique_lock<std::mutex> lk(m);
+    std::unique_lock lk(m);
     cv.wait(lk, [&]() { return numRunning == numThreads; });
   }
 
@@ -82,7 +82,7 @@ void runTestTag(int iters, int numThreads) {
   susp.rehire();
 
   {
-    std::lock_guard<std::mutex> lk(mw);
+    std::lock_guard lk(mw);
     running = false;
   }
 
@@ -118,7 +118,7 @@ BENCHMARK_PARAM(runTestDiffTag, 2048)
 BENCHMARK_DRAW_LINE();
 
 int main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
 
   return 0;

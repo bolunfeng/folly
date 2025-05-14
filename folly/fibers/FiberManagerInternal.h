@@ -36,7 +36,7 @@
 #include <folly/io/async/HHWheelTimer.h>
 #include <folly/io/async/Request.h>
 
-#include <folly/experimental/ExecutionObserver.h>
+#include <folly/executors/ExecutionObserver.h>
 #include <folly/fibers/BoostContextCompatibility.h>
 #include <folly/fibers/Fiber.h>
 #include <folly/fibers/GuardPageAllocator.h>
@@ -100,7 +100,7 @@ class FiberManager : public ::folly::Executor {
      * due to reduced inlining.
      *
      */
-    size_t stackSizeMultiplier{kIsSanitize ? 4 : (kIsDebug ? 2 : 1)};
+    size_t stackSizeMultiplier{kIsSanitize ? 4 : (!kIsOptimize ? 2 : 1)};
 
     /**
      * Record exact amount of stack used.

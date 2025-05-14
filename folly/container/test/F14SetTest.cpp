@@ -26,6 +26,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 // clang-format on
 
 #include <chrono>
+#include <numeric>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -38,6 +39,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 #include <folly/FBString.h>
 #include <folly/container/test/F14TestUtil.h>
 #include <folly/container/test/TrackingTypes.h>
+#include <folly/lang/Keep.h>
 #include <folly/portability/GTest.h>
 #include <folly/test/TestUtils.h>
 
@@ -45,6 +47,40 @@ using namespace folly;
 using namespace folly::f14;
 using namespace folly::string_piece_literals;
 using namespace folly::test;
+
+extern "C" FOLLY_KEEP int check_std_unordered_set_int_accumulate(
+    std::unordered_set<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_node_set_int_accumulate(
+    folly::F14NodeSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_vector_set_int_accumulate(
+    folly::F14VectorSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_value_set_int_accumulate(
+    folly::F14ValueSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+
+extern "C" FOLLY_KEEP size_t
+check_std_unordered_set_int_count(std::unordered_set<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_node_set_int_count(folly::F14NodeSet<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_vector_set_int_count(folly::F14VectorSet<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_value_set_int_count(folly::F14ValueSet<int> const& set, int key) {
+  return set.count(key);
+}
 
 static constexpr bool kFallback = folly::f14::detail::getF14IntrinsicsMode() ==
     folly::f14::detail::F14IntrinsicsMode::None;
@@ -1185,6 +1221,15 @@ TEST(F14ValueSet, heterogeneous) {
     const auto buddyHashToken = ref.prehash(buddy);
     const auto helloHashToken = ref.prehash(hello);
 
+    EXPECT_TRUE(
+        buddyHashToken == ref.prehash(buddy, ref.hash_function()(buddy)));
+    EXPECT_TRUE(
+        helloHashToken == ref.prehash(hello, ref.hash_function()(hello)));
+#if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
+    EXPECT_FALSE(
+        buddyHashToken == ref.prehash(hello, ref.hash_function()(hello)));
+#endif
+
     // prehash + find
     EXPECT_TRUE(ref.end() == ref.find(buddyHashToken, buddy));
     EXPECT_EQ(hello, *ref.find(helloHashToken, hello));
@@ -1563,6 +1608,51 @@ TEST(F14Set, containsWithPrecomputedHash) {
   testContainsWithPrecomputedHash<F14VectorSet>();
   testContainsWithPrecomputedHash<F14FastSet>();
 }
+
+#if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
+template <template <class...> class TSet>
+void testFindHashedKey() {
+  TSet<std::string> s{};
+  std::string key{"hello"};
+  s.insert(key);
+
+  F14HashedKey<std::string> hashedKey{key};
+  EXPECT_NE(s.find(hashedKey), s.end());
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
+  EXPECT_EQ(s.find(hashedKeyNotFound), s.end());
+}
+
+TEST(F14Set, findHashedKey) {
+  testFindHashedKey<F14ValueSet>();
+  testFindHashedKey<F14NodeSet>();
+  testFindHashedKey<F14VectorSet>();
+  testFindHashedKey<F14FastSet>();
+}
+
+template <template <class...> class TSet>
+void testContainsHashedKey() {
+  TSet<std::string> s{};
+  std::string key{"hello"};
+  s.insert(key);
+
+  F14HashedKey<std::string> hashedKey{key};
+  EXPECT_TRUE(s.contains(hashedKey));
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
+  EXPECT_FALSE(s.contains(hashedKeyNotFound));
+}
+
+TEST(F14Set, containsHashedKey) {
+  testContainsHashedKey<F14ValueSet>();
+  testContainsHashedKey<F14NodeSet>();
+  testContainsHashedKey<F14VectorSet>();
+  testContainsHashedKey<F14FastSet>();
+}
+
+#endif // FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
 template <template <class...> class TSet>
 void testEraseIf() {

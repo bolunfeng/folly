@@ -107,7 +107,9 @@ Expected<IPAddressV6, IPAddressFormatError> IPAddressV6::tryFromString(
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_NUMERICHOST;
   if (::getaddrinfo(ipBuffer.data(), nullptr, &hints, &result) == 0) {
-    SCOPE_EXIT { ::freeaddrinfo(result); };
+    SCOPE_EXIT {
+      ::freeaddrinfo(result);
+    };
     const struct sockaddr_in6* sa =
         reinterpret_cast<struct sockaddr_in6*>(result->ai_addr);
     return IPAddressV6(*sa);
@@ -380,7 +382,7 @@ bool IPAddressV6::isPrivate() const {
   if (isIPv4Mapped() && createIPv4().isPrivate()) {
     return true;
   }
-  return isLoopback() || inBinarySubnet({{0xfc, 0x00}}, 7);
+  return isLoopback() || inBinarySubnet({{0xfc, 0x00}}, 7) || isLinkLocal();
 }
 
 // public

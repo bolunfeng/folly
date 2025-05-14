@@ -38,10 +38,13 @@
 
 #include <folly/container/F14Map-fwd.h>
 #include <folly/container/Iterator.h>
-#include <folly/container/detail/F14MapFallback.h>
 #include <folly/container/detail/F14Policy.h>
 #include <folly/container/detail/F14Table.h>
 #include <folly/container/detail/Util.h>
+
+// If !FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE, fallback definitions are exported
+// in this file
+#include <folly/container/detail/F14MapFallback.h> // IWYU pragma: export
 
 namespace folly {
 
@@ -96,8 +99,10 @@ class F14BasicMap {
   using value_type = typename Policy::Value;
   using size_type = std::size_t;
   using difference_type = std::ptrdiff_t;
+  using hash_token_type = F14HashToken;
   using hasher = typename Policy::Hasher;
   using key_equal = typename Policy::KeyEqual;
+  using hashed_key_type = F14HashedKey<key_type, hasher, key_equal>;
   using allocator_type = typename Policy::Alloc;
   using reference = value_type&;
   using const_reference = value_type const&;
@@ -432,28 +437,12 @@ class F14BasicMap {
 
   template <typename M>
   std::pair<iterator, bool> insert_or_assign(
-      const F14HashedKey<key_type, hasher>& hashedKey, M&& obj) {
-    return insert_or_assign(
-        hashedKey.getHashToken(), hashedKey.getKey(), std::forward<M>(obj));
-  }
-
-  template <typename M>
-  std::pair<iterator, bool> insert_or_assign(
       F14HashToken const& token, key_type&& key, M&& obj) {
     auto rv = try_emplace_token(token, std::move(key), std::forward<M>(obj));
     if (!rv.second) {
       rv.first->second = std::forward<M>(obj);
     }
     return rv;
-  }
-
-  template <typename M>
-  std::pair<iterator, bool> insert_or_assign(
-      F14HashedKey<key_type, hasher>&& hashedKey, M&& obj) {
-    return insert_or_assign(
-        hashedKey.getHashToken(),
-        std::move(hashedKey.getKey()),
-        std::forward<M>(obj));
   }
 
   template <typename M>
@@ -480,7 +469,8 @@ class F14BasicMap {
   template <typename K, typename M>
   EnableHeterogeneousInsert<K, std::pair<iterator, bool>> insert_or_assign(
       F14HashToken const& token, K&& key, M&& obj) {
-    auto rv = try_emplace(token, std::forward<K>(key), std::forward<M>(obj));
+    auto rv =
+        try_emplace_token(token, std::forward<K>(key), std::forward<M>(obj));
     if (!rv.second) {
       rv.first->second = std::forward<M>(obj);
     }
@@ -552,15 +542,6 @@ class F14BasicMap {
 
   template <typename... Args>
   std::pair<iterator, bool> try_emplace_token(
-      const F14HashedKey<key_type, hasher>& hashedKey, Args&&... args) {
-    return try_emplace_token(
-        hashedKey.getHashToken(),
-        hashedKey.getKey(),
-        std::forward<Args>(args)...);
-  }
-
-  template <typename... Args>
-  std::pair<iterator, bool> try_emplace_token(
       F14HashToken const& token, key_type&& key, Args&&... args) {
     auto rv = table_.tryEmplaceValueWithToken(
         token,
@@ -569,15 +550,6 @@ class F14BasicMap {
         std::forward_as_tuple(std::move(key)),
         std::forward_as_tuple(std::forward<Args>(args)...));
     return std::make_pair(table_.makeIter(rv.first), rv.second);
-  }
-
-  template <typename... Args>
-  std::pair<iterator, bool> try_emplace_token(
-      F14HashedKey<key_type, hasher>&& hashedKey, Args&&... args) {
-    return try_emplace_token(
-        hashedKey.getHashToken(),
-        std::move(hashedKey.getKey()),
-        std::forward<Args>(args)...);
   }
 
   template <typename... Args>
@@ -631,7 +603,7 @@ class F14BasicMap {
    * @methodset Modifiers
    */
   FOLLY_ALWAYS_INLINE iterator erase(const_iterator pos) {
-    return eraseInto(pos, [](key_type&&, mapped_type&&) {});
+    return eraseInto(pos, variadic_noop);
   }
 
   /**
@@ -641,23 +613,21 @@ class F14BasicMap {
    * that accepts const_iterator
    */
   FOLLY_ALWAYS_INLINE iterator erase(iterator pos) {
-    return eraseInto(pos, [](key_type&&, mapped_type&&) {});
+    return eraseInto(pos, variadic_noop);
   }
 
   /// Remove a range of elements.
   iterator erase(const_iterator first, const_iterator last) {
-    return eraseInto(first, last, [](key_type&&, mapped_type&&) {});
+    return eraseInto(first, last, variadic_noop);
   }
 
   /// Remove a specific key.
-  size_type erase(key_type const& key) {
-    return eraseInto(key, [](key_type&&, mapped_type&&) {});
-  }
+  size_type erase(key_type const& key) { return eraseInto(key, variadic_noop); }
 
   /// Remove a key, using a heterogeneous representation.
   template <typename K>
   EnableHeterogeneousErase<K, size_type> erase(K const& key) {
-    return eraseInto(key, [](key_type&&, mapped_type&&) {});
+    return eraseInto(key, variadic_noop);
   }
 
  protected:
@@ -807,11 +777,21 @@ class F14BasicMap {
   F14HashToken prehash(key_type const& key) const {
     return table_.prehash(key);
   }
+  /// @copydoc prehash
+  F14HashToken prehash(key_type const& key, std::size_t hash) const {
+    return table_.prehash(key, hash);
+  }
 
   /// @copydoc prehash
   template <typename K>
   EnableHeterogeneousFind<K, F14HashToken> prehash(K const& key) const {
     return table_.prehash(key);
+  }
+  /// @copydoc prehash
+  template <typename K>
+  EnableHeterogeneousFind<K, F14HashToken> prehash(
+      K const& key, std::size_t hash) const {
+    return table_.prehash(key, hash);
   }
 
   /**
@@ -864,21 +844,9 @@ class F14BasicMap {
     return table_.makeIter(table_.find(token, key));
   }
 
-  FOLLY_ALWAYS_INLINE iterator
-  find(const F14HashedKey<key_type, hasher>& hashedKey) {
-    return table_.makeIter(
-        table_.find(hashedKey.getHashToken(), hashedKey.getKey()));
-  }
-
   FOLLY_ALWAYS_INLINE const_iterator
   find(F14HashToken const& token, key_type const& key) const {
     return table_.makeConstIter(table_.find(token, key));
-  }
-
-  FOLLY_ALWAYS_INLINE const_iterator
-  find(F14HashedKey<key_type, hasher> const& hashedKey) const {
-    return table_.makeIter(
-        table_.find(hashedKey.getHashToken(), hashedKey.getKey()));
   }
 
   template <typename K>
@@ -922,11 +890,6 @@ class F14BasicMap {
   FOLLY_ALWAYS_INLINE bool contains(
       F14HashToken const& token, key_type const& key) const {
     return !table_.find(token, key).atEnd();
-  }
-
-  FOLLY_ALWAYS_INLINE bool contains(
-      const F14HashedKey<key_type, hasher>& hashedKey) const {
-    return !table_.find(hashedKey.getHashToken(), hashedKey.getKey()).atEnd();
   }
 
   template <typename K>
@@ -994,7 +957,7 @@ class F14BasicMap {
    * This function is provided for compliance with C++'s requirements for
    * hashtables, but is no better than a simple `reserve` call for F14.
    *
-   * @param bucketCapcity  The desired capacity across all buckets.
+   * @param bucketCapacity  The desired capacity across all buckets.
    */
   void rehash(std::size_t bucketCapacity) {
     // The standard's rehash() requires understanding the max load factor,
@@ -1034,8 +997,9 @@ class F14BasicMap {
    * (the opposite is allowed).
    */
   bool containsEqualValue(value_type const& value) const {
-    auto it = table_.findMatching(
-        value.first, [&](auto& key) { return value.first == key; });
+    auto it = table_.findMatching(value.first, [&](auto& key) {
+      return value.first == key;
+    });
     return !it.atEnd() && value.second == table_.valueAtItem(it.citem()).second;
   }
 
@@ -1190,12 +1154,13 @@ template <
     typename Alloc,
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireAllocator<Alloc>>
-F14ValueMap(InputIt, InputIt, std::size_t, Alloc) -> F14ValueMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    f14::DefaultHasher<iterator_key_type_t<InputIt>>,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14ValueMap(InputIt, InputIt, std::size_t, Alloc)
+    -> F14ValueMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        f14::DefaultHasher<iterator_key_type_t<InputIt>>,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename InputIt,
@@ -1204,12 +1169,13 @@ template <
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireNotAllocator<Hasher>,
     typename = detail::RequireAllocator<Alloc>>
-F14ValueMap(InputIt, InputIt, std::size_t, Hasher, Alloc) -> F14ValueMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    Hasher,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14ValueMap(InputIt, InputIt, std::size_t, Hasher, Alloc)
+    -> F14ValueMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        Hasher,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename Key,
@@ -1338,12 +1304,13 @@ template <
     typename Alloc,
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireAllocator<Alloc>>
-F14NodeMap(InputIt, InputIt, std::size_t, Alloc) -> F14NodeMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    f14::DefaultHasher<iterator_key_type_t<InputIt>>,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14NodeMap(InputIt, InputIt, std::size_t, Alloc)
+    -> F14NodeMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        f14::DefaultHasher<iterator_key_type_t<InputIt>>,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename InputIt,
@@ -1352,12 +1319,13 @@ template <
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireNotAllocator<Hasher>,
     typename = detail::RequireAllocator<Alloc>>
-F14NodeMap(InputIt, InputIt, std::size_t, Hasher, Alloc) -> F14NodeMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    Hasher,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14NodeMap(InputIt, InputIt, std::size_t, Hasher, Alloc)
+    -> F14NodeMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        Hasher,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename Key,
@@ -1408,14 +1376,15 @@ template <
     typename KeyEqual,
     typename Alloc,
     typename EligibleForPerturbedInsertionOrder>
-class F14VectorMapImpl : public F14BasicMap<MapPolicyWithDefaults<
-                             VectorContainerPolicy,
-                             Key,
-                             Mapped,
-                             Hasher,
-                             KeyEqual,
-                             Alloc,
-                             EligibleForPerturbedInsertionOrder>> {
+class F14VectorMapImpl
+    : public F14BasicMap<MapPolicyWithDefaults<
+          VectorContainerPolicy,
+          Key,
+          Mapped,
+          Hasher,
+          KeyEqual,
+          Alloc,
+          EligibleForPerturbedInsertionOrder>> {
  protected:
   using Policy = MapPolicyWithDefaults<
       VectorContainerPolicy,
@@ -1523,29 +1492,29 @@ class F14VectorMapImpl : public F14BasicMap<MapPolicyWithDefaults<
    * @methodset Modifiers
    */
   FOLLY_ALWAYS_INLINE iterator erase(const_iterator pos) {
-    return eraseInto(pos, [](key_type&&, mapped_type&&) {});
+    return eraseInto(pos, variadic_noop);
   }
 
   // This form avoids ambiguity when key_type has a templated constructor
   // that accepts const_iterator
   FOLLY_ALWAYS_INLINE iterator erase(iterator pos) {
-    return eraseInto(pos, [](key_type&&, mapped_type&&) {});
+    return eraseInto(pos, variadic_noop);
   }
 
   /// Remove a range of elements.
   iterator erase(const_iterator first, const_iterator last) {
-    return eraseInto(first, last, [](key_type&&, mapped_type&&) {});
+    return eraseInto(first, last, variadic_noop);
   }
 
   /// Remove a specific key.
   std::size_t erase(key_type const& key) {
-    return eraseInto(key, [](key_type&&, mapped_type&&) {});
+    return eraseInto(key, variadic_noop);
   }
 
   /// Remove a key, using a heterogeneous representation.
   template <typename K>
   EnableHeterogeneousVectorErase<K, std::size_t> erase(K const& key) {
-    return eraseInto(key, [](key_type&&, mapped_type&&) {});
+    return eraseInto(key, variadic_noop);
   }
 
   /**
@@ -1628,13 +1597,14 @@ template <
     typename Hasher,
     typename KeyEqual,
     typename Alloc>
-class F14VectorMap : public f14::detail::F14VectorMapImpl<
-                         Key,
-                         Mapped,
-                         Hasher,
-                         KeyEqual,
-                         Alloc,
-                         std::false_type> {
+class F14VectorMap
+    : public f14::detail::F14VectorMapImpl<
+          Key,
+          Mapped,
+          Hasher,
+          KeyEqual,
+          Alloc,
+          std::false_type> {
   using Super = f14::detail::
       F14VectorMapImpl<Key, Mapped, Hasher, KeyEqual, Alloc, std::false_type>;
 
@@ -1745,12 +1715,13 @@ template <
     typename Alloc,
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireAllocator<Alloc>>
-F14VectorMap(InputIt, InputIt, std::size_t, Alloc) -> F14VectorMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    f14::DefaultHasher<iterator_key_type_t<InputIt>>,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14VectorMap(InputIt, InputIt, std::size_t, Alloc)
+    -> F14VectorMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        f14::DefaultHasher<iterator_key_type_t<InputIt>>,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename InputIt,
@@ -1759,12 +1730,13 @@ template <
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireNotAllocator<Hasher>,
     typename = detail::RequireAllocator<Alloc>>
-F14VectorMap(InputIt, InputIt, std::size_t, Hasher, Alloc) -> F14VectorMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    Hasher,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14VectorMap(InputIt, InputIt, std::size_t, Hasher, Alloc)
+    -> F14VectorMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        Hasher,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename Key,
@@ -1817,16 +1789,17 @@ template <
     typename Hasher,
     typename KeyEqual,
     typename Alloc>
-class F14FastMap : public std::conditional_t<
-                       (sizeof(std::pair<Key const, Mapped>) < 24),
-                       F14ValueMap<Key, Mapped, Hasher, KeyEqual, Alloc>,
-                       f14::detail::F14VectorMapImpl<
-                           Key,
-                           Mapped,
-                           Hasher,
-                           KeyEqual,
-                           Alloc,
-                           std::true_type>> {
+class F14FastMap
+    : public std::conditional_t<
+          (sizeof(std::pair<Key const, Mapped>) < 24),
+          F14ValueMap<Key, Mapped, Hasher, KeyEqual, Alloc>,
+          f14::detail::F14VectorMapImpl<
+              Key,
+              Mapped,
+              Hasher,
+              KeyEqual,
+              Alloc,
+              std::true_type>> {
   using Super = std::conditional_t<
       sizeof(std::pair<Key const, Mapped>) < 24,
       F14ValueMap<Key, Mapped, Hasher, KeyEqual, Alloc>,
@@ -1880,12 +1853,13 @@ template <
     typename Alloc,
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireAllocator<Alloc>>
-F14FastMap(InputIt, InputIt, std::size_t, Alloc) -> F14FastMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    f14::DefaultHasher<iterator_key_type_t<InputIt>>,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14FastMap(InputIt, InputIt, std::size_t, Alloc)
+    -> F14FastMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        f14::DefaultHasher<iterator_key_type_t<InputIt>>,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename InputIt,
@@ -1894,12 +1868,13 @@ template <
     typename = detail::RequireInputIterator<InputIt>,
     typename = detail::RequireNotAllocator<Hasher>,
     typename = detail::RequireAllocator<Alloc>>
-F14FastMap(InputIt, InputIt, std::size_t, Hasher, Alloc) -> F14FastMap<
-    iterator_key_type_t<InputIt>,
-    iterator_mapped_type_t<InputIt>,
-    Hasher,
-    f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
-    Alloc>;
+F14FastMap(InputIt, InputIt, std::size_t, Hasher, Alloc)
+    -> F14FastMap<
+        iterator_key_type_t<InputIt>,
+        iterator_mapped_type_t<InputIt>,
+        Hasher,
+        f14::DefaultKeyEqual<iterator_key_type_t<InputIt>>,
+        Alloc>;
 
 template <
     typename Key,
