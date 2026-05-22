@@ -1790,7 +1790,9 @@ TEST(StringPiece, Format) {
 TEST(StringPiece, FormatInFormatString) {
   EXPECT_EQ(
       "  foo",
-      fmt::format(folly::StringPiece("{:>5}"), folly::StringPiece("foo")));
+      // fmt::format(folly::StringPiece("{:>5}").str(), folly::StringPiece("foo").str()));
+  fmt::format(std::string_view("{:>5}"),
+            std::string_view("foo")));
 }
 
 namespace {
